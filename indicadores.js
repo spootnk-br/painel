@@ -357,8 +357,8 @@
     const S = P.S, C = P.CTX, rows = linhas();
     if (!rows.length) { host.innerHTML = '<div class="vazio">Nenhum robô no filtro.</div>'; return; }
     S.abertos = S.abertos || []; S.grafs = S.grafs || [];
-    const por = S.agrupar === 'estrategia' ? 'estrategia' : 'familia';
-    const chave = x => por === 'estrategia' ? (x.est || '(removido)') : x.fam;
+    const por = S.agrupar === 'ampla' ? 'ampla' : 'familia';
+    const chave = x => por === 'ampla' ? (P.ROB[x.r].fa || x.fam) : x.fam;
     const ultimo = C.dias[C.dias.length - 1];
     const grupos = {}; rows.forEach(x => (grupos[chave(x)] = grupos[chave(x)] || []).push(x));
     const ops = {}; for (const o of C.opsF) (ops[o.r] = ops[o.r] || []).push(o);
@@ -368,23 +368,30 @@
       const d = M.serie(idx, v, v, v, {}), o = M.operacoes([].concat(...rs.map(r => ops[r] || [])));
       const ult = rs.reduce((s, r) => s + (isNaN(P.RES[r].f[ultimo]) ? 0 : P.RES[r].f[ultimo]), 0);
       return { k, xs, d, o, ult, nAt: xs.filter(x => P.ROB[x.r].at).length };
-    }).sort((a, b) => b.o.liq - a.o.liq || b.d.tot - a.d.tot);
+    });
+    const ultR = x => isNaN(P.RES[x.r].f[ultimo]) ? null : P.RES[x.r].f[ultimo];
+    const VAL = { nome: (z, g) => g ? z.k : z.nome, n: z => z.d.n, ops: z => z.o.n, assert: z => z.o.n ? z.o.gAcerto : null, pontos: z => z.o.n ? z.o.pontos : null, liq: z => z.o.liq,
+      porDia: z => z.d.porDia, ult: (z, g) => g ? z.ult : ultR(z), dd: z => -z.d.dd };
+    const st = S.famSort && VAL[S.famSort.k] ? S.famSort : { k: 'liq', d: -1 };
+    const cmp = g => (a, b) => { const x = VAL[st.k](a, g), y = VAL[st.k](b, g); if (x == null && y == null) return 0; if (x == null) return 1; if (y == null) return -1; return (typeof x === 'string' ? x.localeCompare(y) : x - y) * st.d; };
+    G_.sort(cmp(true));
+    const th = (k, t, l) => `<th class="${l ? 'l' : ''}" data-k="${k}" style="cursor:pointer">${t}${st.k === k ? ` <span class="seta">${st.d > 0 ? '▲' : '▼'}</span>` : ''}</th>`;
     const cel = (d, o, ult) => `<td>${F.n0(d.n)}</td><td>${F.n0(o.n)}</td><td>${o.n ? F.pct(o.gAcerto, 1) : '–'}</td><td class="${F.cls(o.pontos)}">${o.n ? F.n0(o.pontos) + ' pts' : '–'}</td>
       <td class="${F.cls(o.liq)}">${F.brl(o.liq)}</td><td class="${F.cls(d.porDia)}">${F.brl(d.porDia)}</td><td class="${ult == null ? 'mut' : F.cls(ult)}">${ult == null ? '–' : F.sbrl(ult)}</td>
       <td class="${d.dd > 0 ? 'neg' : ''}">${F.brl(-d.dd)}</td><td>${G.spark(d.v, 100, 22)}</td>`;
     const NC = 11;
-    let h = `<div class="card"><div class="cab"><h2>Robôs por ${por === 'estrategia' ? 'estratégia' : 'família'}</h2>
-      <div class="ctrl">Agrupar por <select id="faPor"><option value="familia" ${por === 'familia' ? 'selected' : ''}>Família</option><option value="estrategia" ${por === 'estrategia' ? 'selected' : ''}>Estratégia (como no Profit)</option></select>
+    let h = `<div class="card"><div class="cab"><h2>Robôs por ${por === 'ampla' ? 'grupo amplo' : 'família (estratégia do Profit)'}</h2>
+      <div class="ctrl">Agrupar por <select id="faPor"><option value="familia" ${por === 'familia' ? 'selected' : ''}>Família do Profit (estratégia)</option><option value="ampla" ${por === 'ampla' ? 'selected' : ''}>Grupo amplo (Diver, Pika4, Urano…)</option></select>
       <button class="btn" id="faAbre">Abrir todas</button><button class="btn" id="faFecha">Fechar todas</button></div></div>
       <div class="sub" style="margin-bottom:6px">Clique na família para ver os robôs; clique no robô (ou em 📈 da família) para abrir o gráfico aqui mesmo. Período e filtros vêm da faixa do topo. "Últ. pregão" = ${F.dataBrA(P.D.dias[ultimo])}.</div>
-      <div class="tw" style="max-height:none"><table class="t fam"><thead><tr><th class="l" style="width:26px"></th><th class="l">Nome</th><th>Pregões</th><th>Ops</th><th>Assertividade</th><th>Pontos</th><th>Saldo líquido</th><th>R$/dia</th><th>Últ. pregão</th><th>Queda máx</th><th>Curva</th></tr></thead><tbody>`;
+      <div class="tw" style="max-height:none"><table class="t fam"><thead><tr><th class="l" style="width:26px"></th>${th('nome', 'Nome', 1)}${th('n', 'Pregões')}${th('ops', 'Ops')}${th('assert', 'Assertividade')}${th('pontos', 'Pontos')}${th('liq', 'Saldo líquido')}${th('porDia', 'R$/dia')}${th('ult', 'Últ. pregão')}${th('dd', 'Queda máx')}<th>Curva</th></tr></thead><tbody>`;
     for (const g of G_) {
       const ab = S.abertos.includes(por + ':' + g.k), gk = 'g:' + por + ':' + g.k;
       h += `<tr class="fam-g" data-g="${F.esc(g.k)}"><td class="l">${ab ? '▾' : '▸'}</td><td class="l"><b>${F.esc(g.k)}</b> <span class="selo">${g.xs.length} robô${g.xs.length > 1 ? 's' : ''}${g.nAt < g.xs.length ? ` · ${g.xs.length - g.nAt} removido(s)` : ''}</span>
         <a class="fam-gbtn" data-gg="${F.esc(gk)}" title="gráfico da família">📈</a></td>${cel(g.d, g.o, g.ult)}</tr>`;
       if (S.grafs.includes(gk)) h += `<tr class="fam-graf"><td colspan="${NC}"><div id="fg_${hashId(gk)}"></div></td></tr>`;
       if (!ab) continue;
-      for (const x of g.xs.slice().sort((a, b) => b.o.liq - a.o.liq || b.d.tot - a.d.tot)) {
+      for (const x of g.xs.slice().sort(cmp(false))) {
         const w = P.ROB[x.r].w, aberto = S.grafs.includes(w), ult = isNaN(P.RES[x.r].f[ultimo]) ? null : P.RES[x.r].f[ultimo];
         h += `<tr class="fam-r ${aberto ? 'sel' : ''}" data-w="${w}"><td class="l"></td><td class="l"><span class="fam-ind">${aberto ? '▾' : '▸'}</span> ${F.esc(x.nome)}${P.ROB[x.r].at ? '' : ' <span class="mut">(removido)</span>'} ${M.selosHtml(x.selos, true)}
           <div class="sub" style="padding-left:16px">${[P.ROB[x.r].g && P.ROB[x.r].g.split('/')[1] + ' min', P.ROB[x.r].mt > 0 && `meta ${F.n0(P.ROB[x.r].mt)} / perda ${F.n0(P.ROB[x.r].pd)}`, 'score ' + Math.round(x.score)].filter(Boolean).join(' · ')}</div></td>${cel(x.d, x.o, ult)}</tr>`;
@@ -393,6 +400,7 @@
     }
     h += '</tbody></table></div></div>';
     host.innerHTML = h;
+    host.querySelectorAll('table.fam th[data-k]').forEach(t => t.onclick = () => { const k = t.dataset.k; S.famSort = { k, d: st.k === k ? -st.d : (k === 'nome' ? 1 : -1) }; P.salvar(); R.familias(host); });
     $('faPor').onchange = e => { S.agrupar = e.target.value; P.salvar(); R.familias(host); };
     $('faAbre').onclick = () => { S.abertos = G_.map(g => por + ':' + g.k); P.salvar(); R.familias(host); };
     $('faFecha').onclick = () => { S.abertos = []; S.grafs = []; P.salvar(); R.familias(host); };
