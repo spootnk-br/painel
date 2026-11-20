@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta name="robots" content="noindex, nofollow">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Painel dos robôs · Profit</title>
+<link rel="stylesheet" href="painel.css?v=202611192144">
+</head>
+<body>
+<div class="viz-root">
+<header class="topo">
+  <div>
+    <h1>Painel dos robôs</h1>
+    <div class="sub" id="geradoEm"></div>
+  </div>
+  <div class="topo-dir">
+    <span class="sub" id="resumoSel"></span>
+    <button class="btn" id="btnTema" title="Tema claro/escuro">Tema</button>
+  </div>
+</header>
+
+<section class="filtros" id="filtros">
+  <div class="frow">
+    <label class="f">Período
+      <select id="fPreset">
+        <option value="tudo">Tudo</option>
+        <option value="u5">Últimos 5 pregões</option>
+        <option value="u10">Últimos 10 pregões</option>
+        <option value="u20">Últimos 20 pregões</option>
+        <option value="mes">Mês atual</option>
+        <option value="mesant">Mês anterior</option>
+        <option value="custom">Personalizado</option>
+      </select>
+    </label>
+    <label class="f">De <input type="date" id="fDe"></label>
+    <label class="f">Até <input type="date" id="fAte"></label>
+    <div class="f">Dia da semana
+      <div class="chips" id="fSemana"></div>
+    </div>
+    <label class="f">Regime (A10 na abertura)
+      <select id="fRegime">
+        <option value="">Todos</option>
+        <option value="amplo">Amplo (A10 ≥ 3000)</option>
+        <option value="estreito">Estreito (A10 &lt; 3000)</option>
+      </select>
+    </label>
+    <label class="f">Amplitude do dia
+      <span class="par"><input type="number" id="fAmpMin" placeholder="mín" step="100"><input type="number" id="fAmpMax" placeholder="máx" step="100"></span>
+    </label>
+  </div>
+  <div class="frow">
+    <label class="f">Situação
+      <select id="fStatus">
+        <option value="ativo">No Profit hoje</option>
+        <option value="removido">Removidos</option>
+        <option value="todos">Todos</option>
+      </select>
+    </label>
+    <div class="f">Conta <div class="ms" id="fConta"></div></div>
+    <div class="f">Família <div class="ms" id="fFamilia"></div></div>
+    <div class="f">Estratégia <div class="ms" id="fEstrategia"></div></div>
+    <div class="f">Gráfico <div class="ms" id="fGrafico"></div></div>
+    <label class="f">Nome contém <input type="search" id="fBusca" placeholder="ex.: Urano, 5Min"></label>
+    <label class="f">Mín. pregões <input type="number" id="fMinDias" min="0" step="1"></label>
+    <label class="f">R$/dia mín. <input type="number" id="fMinDia" step="10"></label>
+  </div>
+  <div class="frow">
+    <span class="fgrupo">Operações:</span>
+    <label class="f">Lado
+      <select id="fLado"><option value="">Compra e venda</option><option value="1">Só compra</option><option value="-1">Só venda</option></select>
+    </label>
+    <label class="f">Entrada entre
+      <span class="par"><input type="time" id="fHoraDe" step="60"><input type="time" id="fHoraAte" step="60"></span>
+    </label>
+    <label class="f">Duração (min)
+      <span class="par"><input type="number" id="fDurMin" placeholder="mín" min="0"><input type="number" id="fDurMax" placeholder="máx" min="0"></span>
+    </label>
+    <label class="f">Resultado
+      <select id="fResOp"><option value="">Todos</option><option value="g">Só vencedoras</option><option value="l">Só perdedoras</option></select>
+    </label>
+    <label class="f">Dia antes da operação
+      <select id="fAntes"><option value="">Qualquer</option><option value="pos">Robô positivo no dia</option><option value="zero">Zerado (0)</option><option value="neg">Robô negativo no dia</option></select>
+    </label>
+    <button class="btn" id="btnLimpar">Limpar filtros</button>
+  </div>
+</section>
+
+<nav class="abas" id="abas">
+  <button data-aba="geral" class="on">Visão geral</button>
+  <button data-aba="ranking">Ranking</button>
+  <button data-aba="detalhe">Detalhe do robô</button>
+  <button data-aba="calor">Mapa de calor</button>
+  <button data-aba="dia">Dia</button>
+  <button data-aba="ops">Operações</button>
+  <button data-aba="grupos">Grupos</button>
+  <button data-aba="carteira">Carteira</button>
+</nav>
+
+<main>
+  <section class="aba on" id="aba-geral"></section>
+  <section class="aba" id="aba-ranking"></section>
+  <section class="aba" id="aba-detalhe"></section>
+  <section class="aba" id="aba-calor"></section>
+  <section class="aba" id="aba-dia"></section>
+  <section class="aba" id="aba-ops"></section>
+  <section class="aba" id="aba-grupos"></section>
+  <section class="aba" id="aba-carteira"></section>
+</main>
+<footer class="rodape">26/10 sempre fora (bug do Profit). Resultado do dia = o que o Profit registrou para a carteira; operação = líquido (resultado − custo de R$0,25 por contrato executado). Azul = ganho, vermelho = perda.</footer>
+</div>
+<div id="tip" class="tip" role="status"></div>
+<script src="dados.js?v=202611192144"></script>
+<script src="graficos.js?v=202611192144"></script>
+<script src="metricas.js?v=202611192144"></script>
+<script src="painel.js?v=202611192144"></script>
+<script src="indicadores.js?v=202611192144"></script>
+</body>
+</html>
