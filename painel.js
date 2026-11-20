@@ -67,7 +67,7 @@
     const host = $(id), T = opt.masc ? ['Todos', 'Nenhum', 'selecionados'] : ['Todas', 'Nenhuma', 'selecionadas'];
     host.innerHTML = `<button type="button"></button><div class="pop">${opt.busca ? '<input type="search" class="msBusca" placeholder="buscar…" style="width:100%;margin-bottom:6px;font:inherit;font-size:12px;padding:3px 6px;border:1px solid var(--border);border-radius:6px;background:var(--surface-1);color:var(--text-primary)">' : ''}<div class="acoes"><a data-a="todos">${T[0].toLowerCase()}</a><a data-a="nenhum">${T[1].toLowerCase()}</a>${opt.busca ? '<a data-a="visiveis">só os da busca</a>' : ''}</div>${opcoes.map((o, k) => `<label data-k="${k}"><input type="checkbox" value="${F.esc(o.v)}"> ${F.esc(o.t)} <span class="mut">${o.n != null ? o.n : ''}</span></label>`).join('')}</div>`;
     const btn = host.querySelector('button'), boxes = [...host.querySelectorAll('input[type=checkbox]')], labels = [...host.querySelectorAll('label')], busca = host.querySelector('.msBusca');
-    const filtra = () => { const q = busca ? busca.value.trim().toLowerCase() : ''; labels.forEach((l, k) => { const o = opcoes[k]; l.style.display = (!opt.visivel || opt.visivel(o) || (S[chave] && boxes[k].checked)) && (!q || o.t.toLowerCase().includes(q)) ? '' : 'none'; }); };
+    const filtra = () => { const q = busca ? busca.value.trim().toLowerCase() : ''; labels.forEach((l, k) => { const o = opcoes[k]; if (opt.contar) l.querySelector('.mut').textContent = opt.contar(o); l.style.display = (!opt.visivel || opt.visivel(o) || (S[chave] && boxes[k].checked)) && (!q || o.t.toLowerCase().includes(q)) ? '' : 'none'; }); };
     const sync = () => { const sel = S[chave]; boxes.forEach(b => b.checked = !sel || sel.includes(b.value)); btn.textContent = !sel ? T[0] : sel.length === 0 ? T[1] : sel.length === 1 ? (opt.nome ? opt.nome(sel[0]) : sel[0]) : sel.length + ' ' + T[2]; filtra(); };
     btn.onclick = e => { e.stopPropagation(); document.querySelectorAll('.ms.open').forEach(m => m !== host && m.classList.remove('open')); host.classList.toggle('open'); if (busca && host.classList.contains('open')) { filtra(); busca.focus(); } };
     host.querySelector('.pop').onclick = e => e.stopPropagation();
@@ -77,14 +77,17 @@
     boxes.forEach(b => b.onchange = () => { if (opt.unico && !S[chave]) { S[chave] = [b.value]; sync(); mudou(); return; } const v = boxes.filter(x => x.checked).map(x => x.value); S[chave] = v.length === boxes.length ? null : v; sync(); mudou(); });
     sync(); host._sync = sync;
   }
-  function opcoes(campo, vazio) { const c = {}; for (const r of ROB) { const v = r[campo] || vazio; c[v] = (c[v] || 0) + 1; } return Object.keys(c).sort().map(v => ({ v, t: v, n: c[v] })); }
+  // opções de filtro com os robôs de cada uma: a lista mostra só as que têm robô na Situação escolhida (no Profit hoje / removidos / todos)
+  const statusOk = r => S.status === 'todos' || (S.status === 'ativo' ? r.at : !r.at);
+  function opcoes(campo, vazio) { const c = {}; for (const r of ROB) { const v = r[campo] || vazio; (c[v] = c[v] || []).push(r); } return Object.keys(c).sort().map(v => ({ v, t: v, rob: c[v] })); }
+  const porStatus = { visivel: o => o.rob.some(statusOk), contar: o => o.rob.filter(statusOk).length };
   function montarFiltros() {
     $('geradoEm').textContent = `Atualizado em ${D.gerado} · ${ND} pregões (${F.dataBrA(D.dias[0])} a ${F.dataBrA(D.dias[ND - 1])}) · ${NR} carteiras · ${OPS.length.toLocaleString('pt-BR')} operações`;
     $('fSemana').innerHTML = [1, 2, 3, 4, 5].map(d => `<button type="button" class="chip" data-d="${d}">${SEM[d]}</button>`).join('');
     $('fSemana').querySelectorAll('.chip').forEach(c => c.onclick = () => { const d = +c.dataset.d; S.semana = S.semana.includes(d) ? S.semana.filter(x => x !== d) : [...S.semana, d]; syncCampos(); mudou(); });
-    multi('fConta', 'conta', opcoes('c')); multi('fFamilia', 'familia', opcoes('f'));
+    multi('fConta', 'conta', opcoes('c'), porStatus); multi('fFamilia', 'familia', opcoes('f'), porStatus);
     multi('fRobo', 'robos', ROB.slice().sort((a, b) => (b.at - a.at) || a.n.localeCompare(b.n)).map(r => ({ v: r.w, t: r.n + (r.at ? '' : ' (removido)'), f: r.f, at: r.at, c: r.c })),
-      { busca: true, masc: true, unico: true, nome: w => (ROB.find(r => r.w === w) || {}).n || w, visivel: o => (S.status === 'todos' || (S.status === 'ativo' ? o.at : !o.at)) && (!S.familia || S.familia.includes(o.f)) && (!S.conta || S.conta.includes(o.c)) }); multi('fEstrategia', 'estrategia', opcoes('e', '(removido)')); multi('fGrafico', 'grafico', opcoes('g', '(removido)'));
+      { busca: true, masc: true, unico: true, nome: w => (ROB.find(r => r.w === w) || {}).n || w, visivel: o => (S.status === 'todos' || (S.status === 'ativo' ? o.at : !o.at)) && (!S.familia || S.familia.includes(o.f)) && (!S.conta || S.conta.includes(o.c)) }); multi('fEstrategia', 'estrategia', opcoes('e', '(removido)'), porStatus); multi('fGrafico', 'grafico', opcoes('g', '(removido)'), porStatus);
     $('fDe').min = $('fAte').min = D.dias[0]; $('fDe').max = $('fAte').max = D.dias[ND - 1];
     const liga = (id, chave, ev, fn) => $(id).addEventListener(ev || 'change', () => { S[chave] = $(id).value; if (fn) fn(); mudou(); });
     liga('fPreset', 'preset', 'change', () => { if (S.preset !== 'custom') aplicarPreset(); syncCampos(); });
@@ -112,7 +115,7 @@
   const sujo = {};
   function abrirAba(a) { S.aba = a; salvar(); document.querySelectorAll('#abas button').forEach(b => b.classList.toggle('on', b.dataset.aba === a)); document.querySelectorAll('.aba').forEach(s => s.classList.toggle('on', s.id === 'aba-' + a)); render(true); }
   let timer = null;
-  function mudou() { salvar(); if (fRobo._sync) fRobo._sync(); clearTimeout(timer); timer = setTimeout(() => { calcular(); Object.keys(R).forEach(k => sujo[k] = true); render(true); }, 120); }
+  function mudou() { salvar(); ['fConta', 'fFamilia', 'fRobo', 'fEstrategia', 'fGrafico'].forEach(id => $(id)._sync && $(id)._sync()); clearTimeout(timer); timer = setTimeout(() => { calcular(); Object.keys(R).forEach(k => sujo[k] = true); render(true); }, 120); }
   function render(force) { const a = S.aba; if (!R[a]) return; if (force || sujo[a]) { sujo[a] = false; const host = $('aba-' + a); try { R[a](host); } catch (e) { host.innerHTML = `<div class="vazio">Erro ao desenhar: ${F.esc(e.message)}</div>`; console.error(e); } } }
   addEventListener('resize', () => { clearTimeout(window._rz); window._rz = setTimeout(() => render(true), 200); });
 
