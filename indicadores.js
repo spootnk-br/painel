@@ -14,7 +14,12 @@
 
   /* ---------- catálogo de colunas ---------- */
   const COL = {
-    score: { t: 'Score', title: 'Score 0–100: retorno 25, significância (t-dia) 20, robustez (pior metade) 15, risco (lucro/queda) 15, recência 10, concentração 10, execução (R$/contrato) 5; percentis entre os robôs do filtro, com penalidades.', v: x => x.score, html: x => `<span class="score" title="${F.esc(Object.entries(x.comp).map(([k, v]) => k + ' ' + v.toFixed(1)).join(' · ') + (x.pen.length ? ' | Penalidades: ' + x.pen.join('; ') : ''))}">${Math.round(x.score)}</span><span class="barra-score"><span style="width:${x.score}%"></span></span>` },
+    score: { t: 'Score', title: 'Score 0–100: retorno 25, significância (t-dia) 20, robustez (pior metade) 15, risco (lucro/queda) 15, recência 10, concentração 10, execução (R$/contrato) 5; percentis entre os robôs do filtro, com penalidades.', v: x => x.score, html: x => !isFinite(x.score) ? '' : `<span class="score" title="${F.esc(Object.entries(x.comp).map(([k, v]) => k + ' ' + v.toFixed(1)).join(' · ') + (x.pen.length ? ' | Penalidades: ' + x.pen.join('; ') : ''))}">${Math.round(x.score)}</span><span class="barra-score"><span style="width:${x.score}%"></span></span>` },
+    fam: { t: 'Família', l: 1, title: 'família do robô', v: x => x.fam || '' },
+    assert: { t: 'Assertividade', title: '% de operações vencedoras (antes do custo, como no Profit)', v: x => x.o.gAcerto, f: v => F.pct(v, 1) },
+    pontos: { t: 'Pontos', title: 'resultado em pontos antes do custo = R$ bruto / valor do ponto (WIN R$ 0,20; WDO R$ 10), somando os contratos', v: x => x.o.n ? x.o.pontos : NaN, f: F.n0, cor: 1 },
+    ptsOp: { t: 'Pts/op', title: 'pontos por operação, por contrato (antes do custo)', v: x => x.o.ptsOp, f: F.n1, cor: 1 },
+    sbruto: { t: 'Financeiro bruto', title: 'resultado das operações antes dos custos', v: x => x.o.n ? x.o.saldoBruto : NaN, f: v => F.brl(v), cor: 1 },
     n: { t: 'Pregões', title: 'pregões com registro no período filtrado', v: x => x.n, f: F.n0 },
     porDia: { t: 'R$/dia', title: 'Σ resultado do dia / pregões. Alvo: ≥ 100', v: x => x.porDia, f: v => F.brl(v), cor: 1 },
     tot: { t: 'Total (dias)', title: 'soma dos resultados diários', v: x => x.tot, f: v => F.brl(v), cor: 1 },
@@ -101,6 +106,7 @@
     mp: { t: 'Pos. máx dia', title: 'maior posição (contratos) num dia', v: x => x.d.mp, f: F.n0 }
   };
   const CONJ = {
+    resumo: { t: 'Resumo (financeiro e operações)', c: ['fam', 'n', 'nops', 'assert', 'pontos', 'liq', 'sbruto', 'custo', 'gPF', 'payoff', 'exp', 'porDia', 'best', 'worst', 'dd', 'u10', 'spark'] },
     essencial: { t: 'Essencial (ranking)', c: ['n', 'porDia', 'liq', 'pctPos', 'pf', 'tdia', 'dd', 'recup', 'h1', 'h2', 'u10', 'semMelhor', 'devPct', 'saldoTick', 'spark'] },
     profit: { t: 'Relatório do Profit', c: ['nops', 'liq', 'bruto', 'prej', 'gPF', 'custo', 'acerto', 'exp', 'mG', 'mL', 'payoff', 'maxG', 'maxL', 'seqG', 'seqL', 'durG', 'durL', 'maxCt', 'patrimNec', 'patrimMax', 'ddTrade'] },
     risco: { t: 'Risco e quedas', c: ['n', 'porDia', 'dd', 'ddDias', 'recup', 'ulcer', 'submersoMax', 'submersoAtual', 'worst', 'piorIntra', 'seqNeg', 'sharpe', 'sortino', 'ruina', 'perda20'] },
@@ -110,11 +116,19 @@
     estab: { t: 'Robustez no tempo', c: ['n', 'porDia', 'h1', 'h2', 'u10', 'razaoRec', 'sdMeses', 'semMelhor', 'tdia', 'mp'] }
   };
 
+  /* linha TOTAL: soma da carteira filtrada (dias = pregões em que algum robô operou; operações = todas as filtradas) */
+  function linhaTotal(rows) {
+    const C = P.CTX, rs = rows.map(x => x.r), idx = C.dias.filter(d => rs.some(r => !isNaN(P.RES[r].f[d])));
+    const v = idx.map(d => { let s = 0; for (const r of rs) { const x = P.RES[r].f[d]; if (!isNaN(x)) s += x; } return s; });
+    const d = M.serie(idx, v, v, v, {}), o = M.operacoes(C.opsF);
+    return { r: -1, nome: `TOTAL (${rows.length} robôs)`, fam: '', d, o, n: d.n, porDia: d.porDia, tot: d.tot, pctPos: d.pctPos, pf: o.pf, tdia: d.tdia, dd: d.dd, recup: d.recup, h1: d.h1, h2: d.h2, u10: d.u10, semMelhor: d.semMelhor, devPct: d.devPct, saldoTick: o.saldoTick, liq: o.liq, score: NaN, comp: {}, pen: [], selos: [] };
+  }
+
   /* ================= RANKING ================= */
   R.ranking = host => {
     const S = P.S, rows = linhas();
     if (!rows.length) { host.innerHTML = '<div class="vazio">Nenhum robô no filtro.</div>'; return; }
-    const conj = CONJ[S.conjunto] ? S.conjunto : 'essencial';
+    const conj = CONJ[S.conjunto] ? S.conjunto : 'resumo';
     const nRob = rows.filter(x => x.selos.some(s => s.t === 'Robusto')).length, nAlvo = rows.filter(x => x.selos.some(s => s.t === 'Alvo R$100')).length, nDet = rows.filter(x => x.selos.some(s => s.t === 'Em deterioração')).length;
     host.innerHTML = `<div class="tiles">${P.tile('Robôs no filtro', rows.length, `${P.CTX.dias.length} pregões`)}${P.tile('Robustos', nRob, 'as 2 metades + últimos 10 positivos, t ≥ 1,5')}${P.tile('No alvo R$ 100/dia', nAlvo, 'com ≥ 20 pregões')}${P.tile('Em deterioração', nDet, 'positivos no total, piorando agora', nDet ? 'neg' : '')}</div>
       <div class="card"><div class="cab"><h2>Comparar robôs</h2><span class="sub">marque até 8 na tabela; a cor fica presa ao robô</span></div><div class="legenda" id="rkLeg"></div><div id="rkComp"></div></div>
@@ -126,12 +140,13 @@
     $('rkConj').onchange = e => { S.conjunto = e.target.value; P.salvar(); R.ranking(host); };
     desenharComp(rows);
     const cols = [
-      { k: 'cmp', t: '', html: x => `<input type="checkbox" data-comp="${x.r}" ${P.corComp(x.r) ? 'checked' : ''}>${P.corComp(x.r) ? `<span class="cor-dot" style="background:${P.corComp(x.r)}"></span>` : ''}`, s: x => P.corComp(x.r) ? 1 : 0 },
-      { k: 'nome', t: 'Robô', l: 1, nome: 1, fix: 1, html: x => P.linkRobo(x.r) + '<br>' + M.selosHtml(x.selos), s: x => x.nome },
+      { k: 'cmp', t: '', html: x => x.r < 0 ? '' : `<input type="checkbox" data-comp="${x.r}" ${P.corComp(x.r) ? 'checked' : ''}>${P.corComp(x.r) ? `<span class="cor-dot" style="background:${P.corComp(x.r)}"></span>` : ''}`, s: x => P.corComp(x.r) ? 1 : 0 },
+      { k: 'nome', t: 'Robô', l: 1, nome: 1, fix: 1, html: x => x.r < 0 ? F.esc(x.nome) : P.linkRobo(x.r) + '<br>' + M.selosHtml(x.selos), s: x => x.nome },
       Object.assign({ k: 'score' }, COL.score, { s: x => x.score })
     ].concat(CONJ[conj].c.map(k => Object.assign({ k }, COL[k], { s: COL[k].v })));
     const flat = rows.map(x => { const o = Object.assign({}, x); for (const c of cols) if (COL[c.k]) o[c.k] = COL[c.k].v(x); return o; });
-    P.tabela($('rkTab'), 'rk', cols, flat, { sort: { k: 'score', d: -1 }, depois: h => { P.ligarNomes(h); P.ligarComp(h, () => R.ranking(host)); } });
+    const tot = linhaTotal(rows); const totF = Object.assign({}, tot); for (const c of cols) if (COL[c.k]) totF[c.k] = COL[c.k].v(tot);
+    P.tabela($('rkTab'), 'rk', cols, flat, { sort: { k: 'score', d: -1 }, rodape: totF, depois: h => { P.ligarNomes(h); P.ligarComp(h, () => R.ranking(host)); } });
     $('rkCsv').onclick = () => { const all = [{ k: 'nome', t: 'Robô' }, { k: 'fam', t: 'Família' }, { k: 'est', t: 'Estratégia' }, { k: 'graf', t: 'Gráfico' }, { k: 'mt', t: 'Meta' }, { k: 'pd', t: 'Perda' }, { k: 'score', t: 'Score' }, { k: 'selosTxt', t: 'Selos' }]
       .concat(Object.keys(COL).filter(k => k !== 'spark' && k !== 'score').map(k => ({ k, t: COL[k].t })));
       P.csv('ranking_robos.csv', all, rows.map(x => { const o = { nome: x.nome, fam: x.fam, est: x.est, graf: x.graf, mt: x.mt, pd: x.pd, score: x.score, selosTxt: x.selos.map(s => s.t).join(', ') }; for (const k in COL) if (k !== 'spark') { const v = COL[k].v(x); o[k] = isFinite(v) ? v : ''; } return o; })); };

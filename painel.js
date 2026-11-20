@@ -14,7 +14,7 @@
   const SLOTS = ['var(--s1)', 'var(--s2)', 'var(--s3)', 'var(--s4)', 'var(--s5)', 'var(--s6)', 'var(--s7)', 'var(--s8)'];
 
   /* ---------------- estado / filtros ---------------- */
-  const PADRAO = { preset: 'tudo', de: D.dias[0], ate: D.dias[ND - 1], semana: [1, 2, 3, 4, 5], regime: '', ampMin: '', ampMax: '', status: 'ativo', conta: null, familia: null, estrategia: null, grafico: null,
+  const PADRAO = { preset: 'tudo', de: D.dias[0], ate: D.dias[ND - 1], semana: [1, 2, 3, 4, 5], regime: '', ampMin: '', ampMax: '', status: 'ativo', conta: null, familia: null, robos: null, estrategia: null, grafico: null,
     busca: '', minDias: '', minDia: '', lado: '', horaDe: '', horaAte: '', durMin: '', durMax: '', resOp: '', antes: '', aba: 'geral', robo: null, comp: [], dia: null, sort: {}, calorClamp: 500, grupo: 'familia' };
   let S; try { S = Object.assign({}, PADRAO, JSON.parse(localStorage.getItem('painelRobos.v1') || '{}')); } catch (e) { S = Object.assign({}, PADRAO); }
   const salvar = () => { try { localStorage.setItem('painelRobos.v1', JSON.stringify(S)); } catch (e) { } };
@@ -39,9 +39,10 @@
       && (!S.regime || (d.a10 != null && (S.regime === 'amplo' ? d.a10 >= 3000 : d.a10 < 3000)))
       && (ampMin == null || (d.amp != null && d.amp >= ampMin)) && (ampMax == null || (d.amp != null && d.amp <= ampMax))).map(d => d.i);
     const busca = S.busca.trim().toLowerCase().split(/[,;]+/).map(s => s.trim()).filter(Boolean);
-    let robos = ROB.filter(r => (S.status === 'todos' || (S.status === 'ativo' ? r.at : !r.at))
+    // robô escolhido na lista entra sempre (mesmo removido ou de outra família); senão valem os outros filtros
+    let robos = ROB.filter(r => S.robos ? S.robos.includes(r.w) : ((S.status === 'todos' || (S.status === 'ativo' ? r.at : !r.at))
       && (!S.conta || S.conta.includes(r.c)) && (!S.familia || S.familia.includes(r.f)) && (!S.estrategia || S.estrategia.includes(r.e || '(removido)'))
-      && (!S.grafico || S.grafico.includes(r.g || '(removido)')) && (!busca.length || busca.some(b => r.n.toLowerCase().includes(b)))).map(r => r.i);
+      && (!S.grafico || S.grafico.includes(r.g || '(removido)')) && (!busca.length || busca.some(b => r.n.toLowerCase().includes(b))))).map(r => r.i);
     const minDias = num(S.minDias), minDia = num(S.minDia);
     robos = robos.filter(r => { let n = 0, s = 0; for (const d of dias) { const v = RES[r].f[d]; if (!isNaN(v)) { n++; s += v; } }
       return n > 0 && (minDias == null || n >= minDias) && (minDia == null || s / n >= minDia); });
@@ -61,14 +62,19 @@
 
   /* ---------------- UI dos filtros ---------------- */
   const $ = id => document.getElementById(id);
-  function multi(id, chave, opcoes) {
-    const host = $(id); host.innerHTML = `<button type="button"></button><div class="pop"><div class="acoes"><a data-a="todos">todas</a><a data-a="nenhum">nenhuma</a></div>${opcoes.map(o => `<label><input type="checkbox" value="${F.esc(o.v)}"> ${F.esc(o.t)} <span class="mut">${o.n != null ? o.n : ''}</span></label>`).join('')}</div>`;
-    const btn = host.querySelector('button'), boxes = [...host.querySelectorAll('input')];
-    const sync = () => { const sel = S[chave]; boxes.forEach(b => b.checked = !sel || sel.includes(b.value)); btn.textContent = !sel ? 'Todas' : sel.length === 0 ? 'Nenhuma' : sel.length === 1 ? sel[0] : sel.length + ' selecionadas'; };
-    btn.onclick = e => { e.stopPropagation(); document.querySelectorAll('.ms.open').forEach(m => m !== host && m.classList.remove('open')); host.classList.toggle('open'); };
+  // lista de seleção múltipla. opt: {busca, masc (true = "Todos"), nome(v) -> texto do botão, visivel(o) -> mostra a opção?}
+  function multi(id, chave, opcoes, opt = {}) {
+    const host = $(id), T = opt.masc ? ['Todos', 'Nenhum', 'selecionados'] : ['Todas', 'Nenhuma', 'selecionadas'];
+    host.innerHTML = `<button type="button"></button><div class="pop">${opt.busca ? '<input type="search" class="msBusca" placeholder="buscar…" style="width:100%;margin-bottom:6px;font:inherit;font-size:12px;padding:3px 6px;border:1px solid var(--border);border-radius:6px;background:var(--surface-1);color:var(--text-primary)">' : ''}<div class="acoes"><a data-a="todos">${T[0].toLowerCase()}</a><a data-a="nenhum">${T[1].toLowerCase()}</a>${opt.busca ? '<a data-a="visiveis">só os da busca</a>' : ''}</div>${opcoes.map((o, k) => `<label data-k="${k}"><input type="checkbox" value="${F.esc(o.v)}"> ${F.esc(o.t)} <span class="mut">${o.n != null ? o.n : ''}</span></label>`).join('')}</div>`;
+    const btn = host.querySelector('button'), boxes = [...host.querySelectorAll('input[type=checkbox]')], labels = [...host.querySelectorAll('label')], busca = host.querySelector('.msBusca');
+    const filtra = () => { const q = busca ? busca.value.trim().toLowerCase() : ''; labels.forEach((l, k) => { const o = opcoes[k]; l.style.display = (!opt.visivel || opt.visivel(o) || (S[chave] && boxes[k].checked)) && (!q || o.t.toLowerCase().includes(q)) ? '' : 'none'; }); };
+    const sync = () => { const sel = S[chave]; boxes.forEach(b => b.checked = !sel || sel.includes(b.value)); btn.textContent = !sel ? T[0] : sel.length === 0 ? T[1] : sel.length === 1 ? (opt.nome ? opt.nome(sel[0]) : sel[0]) : sel.length + ' ' + T[2]; filtra(); };
+    btn.onclick = e => { e.stopPropagation(); document.querySelectorAll('.ms.open').forEach(m => m !== host && m.classList.remove('open')); host.classList.toggle('open'); if (busca && host.classList.contains('open')) { filtra(); busca.focus(); } };
     host.querySelector('.pop').onclick = e => e.stopPropagation();
-    host.querySelectorAll('.acoes a').forEach(a => a.onclick = () => { S[chave] = a.dataset.a === 'todos' ? null : []; sync(); mudou(); });
-    boxes.forEach(b => b.onchange = () => { const v = boxes.filter(x => x.checked).map(x => x.value); S[chave] = v.length === boxes.length ? null : v; sync(); mudou(); });
+    if (busca) busca.oninput = filtra;
+    host.querySelectorAll('.acoes a').forEach(a => a.onclick = () => { const t = a.dataset.a;
+      S[chave] = t === 'todos' ? null : t === 'nenhum' ? [] : boxes.filter((b, k) => labels[k].style.display !== 'none').map(b => b.value); sync(); mudou(); });
+    boxes.forEach(b => b.onchange = () => { if (opt.unico && !S[chave]) { S[chave] = [b.value]; sync(); mudou(); return; } const v = boxes.filter(x => x.checked).map(x => x.value); S[chave] = v.length === boxes.length ? null : v; sync(); mudou(); });
     sync(); host._sync = sync;
   }
   function opcoes(campo, vazio) { const c = {}; for (const r of ROB) { const v = r[campo] || vazio; c[v] = (c[v] || 0) + 1; } return Object.keys(c).sort().map(v => ({ v, t: v, n: c[v] })); }
@@ -76,7 +82,9 @@
     $('geradoEm').textContent = `Atualizado em ${D.gerado} · ${ND} pregões (${F.dataBrA(D.dias[0])} a ${F.dataBrA(D.dias[ND - 1])}) · ${NR} carteiras · ${OPS.length.toLocaleString('pt-BR')} operações`;
     $('fSemana').innerHTML = [1, 2, 3, 4, 5].map(d => `<button type="button" class="chip" data-d="${d}">${SEM[d]}</button>`).join('');
     $('fSemana').querySelectorAll('.chip').forEach(c => c.onclick = () => { const d = +c.dataset.d; S.semana = S.semana.includes(d) ? S.semana.filter(x => x !== d) : [...S.semana, d]; syncCampos(); mudou(); });
-    multi('fConta', 'conta', opcoes('c')); multi('fFamilia', 'familia', opcoes('f')); multi('fEstrategia', 'estrategia', opcoes('e', '(removido)')); multi('fGrafico', 'grafico', opcoes('g', '(removido)'));
+    multi('fConta', 'conta', opcoes('c')); multi('fFamilia', 'familia', opcoes('f'));
+    multi('fRobo', 'robos', ROB.slice().sort((a, b) => (b.at - a.at) || a.n.localeCompare(b.n)).map(r => ({ v: r.w, t: r.n + (r.at ? '' : ' (removido)'), f: r.f, at: r.at, c: r.c })),
+      { busca: true, masc: true, unico: true, nome: w => (ROB.find(r => r.w === w) || {}).n || w, visivel: o => (S.status === 'todos' || (S.status === 'ativo' ? o.at : !o.at)) && (!S.familia || S.familia.includes(o.f)) && (!S.conta || S.conta.includes(o.c)) }); multi('fEstrategia', 'estrategia', opcoes('e', '(removido)')); multi('fGrafico', 'grafico', opcoes('g', '(removido)'));
     $('fDe').min = $('fAte').min = D.dias[0]; $('fDe').max = $('fAte').max = D.dias[ND - 1];
     const liga = (id, chave, ev, fn) => $(id).addEventListener(ev || 'change', () => { S[chave] = $(id).value; if (fn) fn(); mudou(); });
     liga('fPreset', 'preset', 'change', () => { if (S.preset !== 'custom') aplicarPreset(); syncCampos(); });
@@ -97,14 +105,14 @@
     set('fBusca', S.busca); set('fMinDias', S.minDias); set('fMinDia', S.minDia); set('fLado', S.lado); set('fHoraDe', S.horaDe); set('fHoraAte', S.horaAte);
     set('fDurMin', S.durMin); set('fDurMax', S.durMax); set('fResOp', S.resOp); set('fAntes', S.antes);
     $('fSemana').querySelectorAll('.chip').forEach(c => c.classList.toggle('on', S.semana.includes(+c.dataset.d)));
-    ['fConta', 'fFamilia', 'fEstrategia', 'fGrafico'].forEach(id => $(id)._sync && $(id)._sync());
+    ['fConta', 'fFamilia', 'fRobo', 'fEstrategia', 'fGrafico'].forEach(id => $(id)._sync && $(id)._sync());
   }
 
   /* ---------------- abas ---------------- */
   const sujo = {};
   function abrirAba(a) { S.aba = a; salvar(); document.querySelectorAll('#abas button').forEach(b => b.classList.toggle('on', b.dataset.aba === a)); document.querySelectorAll('.aba').forEach(s => s.classList.toggle('on', s.id === 'aba-' + a)); render(true); }
   let timer = null;
-  function mudou() { salvar(); clearTimeout(timer); timer = setTimeout(() => { calcular(); Object.keys(R).forEach(k => sujo[k] = true); render(true); }, 120); }
+  function mudou() { salvar(); if (fRobo._sync) fRobo._sync(); clearTimeout(timer); timer = setTimeout(() => { calcular(); Object.keys(R).forEach(k => sujo[k] = true); render(true); }, 120); }
   function render(force) { const a = S.aba; if (!R[a]) return; if (force || sujo[a]) { sujo[a] = false; const host = $('aba-' + a); try { R[a](host); } catch (e) { host.innerHTML = `<div class="vazio">Erro ao desenhar: ${F.esc(e.message)}</div>`; console.error(e); } } }
   addEventListener('resize', () => { clearTimeout(window._rz); window._rz = setTimeout(() => render(true), 200); });
 
@@ -117,9 +125,10 @@
     rows = rows.slice().sort((a, b) => { const x = sv(a), y = sv(b); const nx = x == null || (typeof x === 'number' && !isFinite(x)), ny = y == null || (typeof y === 'number' && !isFinite(y)); if (nx && ny) return 0; if (nx) return 1; if (ny) return -1; return (typeof x === 'string' ? x.localeCompare(y) : x - y) * st.d; });
     const lim = opt.limite || rows.length, pag = opt.pagina || 0, vis = rows.slice(pag * lim, pag * lim + lim);
     let h = `<div class="tw" ${opt.maxH ? `style="max-height:${opt.maxH}"` : ''}><table class="t"><thead><tr>${cols.map(c => `<th class="${c.l ? 'l' : ''} ${c.fix ? 'fix' : ''}" data-k="${c.k}" ${c.title ? `title="${F.esc(c.title)}"` : ''}>${c.t}${c.k === st.k ? ` <span class="seta">${st.d > 0 ? '▲' : '▼'}</span>` : ''}</th>`).join('')}</tr></thead><tbody>`;
-    for (const r of vis) h += `<tr ${opt.rowAttr ? opt.rowAttr(r) : ''}>${cols.map(c => { const v = r[c.k]; const cl = (c.l ? 'l ' : '') + (c.fix ? 'fix ' : '') + (c.cls ? c.cls(v, r) : (typeof v === 'number' && c.cor ? F.cls(v) : '')) + (c.nome ? ' nome' : '');
-      return `<td class="${cl}">${c.html ? c.html(r) : c.f ? c.f(v, r) : (v == null ? '–' : F.esc(v))}</td>`; }).join('')}</tr>`;
-    h += '</tbody></table></div>';
+    const celulas = r => cols.map(c => { const v = r[c.k]; const cl = (c.l ? 'l ' : '') + (c.fix ? 'fix ' : '') + (c.cls ? c.cls(v, r) : (typeof v === 'number' && c.cor ? F.cls(v) : '')) + (c.nome ? ' nome' : '');
+      return `<td class="${cl}">${c.html ? c.html(r) : c.f ? c.f(v, r) : (v == null ? '–' : F.esc(v))}</td>`; }).join('');
+    for (const r of vis) h += `<tr ${opt.rowAttr ? opt.rowAttr(r) : ''}>${celulas(r)}</tr>`;
+    h += '</tbody>' + (opt.rodape ? `<tfoot><tr class="tot">${celulas(opt.rodape)}</tr></tfoot>` : '') + '</table></div>';
     if (opt.limite && rows.length > lim) h += `<div class="pag"><button class="btn" data-p="-1" ${pag ? '' : 'disabled'}>‹</button> ${pag * lim + 1}–${Math.min(rows.length, pag * lim + lim)} de ${rows.length.toLocaleString('pt-BR')} <button class="btn" data-p="1" ${(pag + 1) * lim < rows.length ? '' : 'disabled'}>›</button></div>`;
     host.innerHTML = h;
     host.querySelectorAll('th').forEach(th => th.onclick = () => { const k = th.dataset.k; S.sort[id] = { k, d: st.k === k ? -st.d : (cols.find(c => c.k === k).l ? 1 : -1) }; salvar(); tabela(host, id, cols, rows, Object.assign({}, opt, { pagina: 0 })); });

@@ -95,6 +95,8 @@ table.t th.l, table.t td.l { text-align: left; }
 table.t th .seta { color: var(--muted); font-size: 10px; }
 table.t td { padding: 4px 8px; border-bottom: 1px solid var(--grid); text-align: right; white-space: nowrap; }
 table.t tbody tr:hover { background: var(--hover); }
+table.t tfoot td { position: sticky; bottom: 0; background: var(--surface-2); font-weight: 650; border-top: 2px solid var(--axis); z-index: 2; }
+table.t tfoot td.fix { z-index: 3; }
 table.t tr.sel { background: var(--hover); }
 table.t td.nome { text-align: left; font-weight: 550; }
 table.t td.nome a { color: var(--text-primary); text-decoration: none; border-bottom: 1px dotted var(--muted); cursor: pointer; }

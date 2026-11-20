@@ -36,6 +36,9 @@
     o.gMG = mean(gV); o.gML = mean(gL); o.gPayoff = gV.length && gL.length ? o.gMG / Math.abs(o.gML) : NaN;
     o.gMaxG = gV.length ? Math.max(...gV) : NaN; o.gMaxL = gL.length ? Math.min(...gL) : NaN; o.gSeqG = maxRun(g, v => v > 0); o.gSeqL = maxRun(g, v => v < 0);
     { let c2 = 0, p2 = 0, d2 = 0; for (const v of g) { c2 += v; if (c2 > p2) p2 = c2; if (p2 - c2 > d2) d2 = p2 - c2; } o.gDDTF = d2; } o.gDDTT = gL.length ? -Math.min(...gL) : 0;
+    // pontos (antes do custo): R$ / valor do ponto (WIN 0,20 · WDO 10). "Pontos" = soma (já multiplicada pelos contratos); "Pts/ctt" = por contrato
+    o.pontos = 0; o.ptsCtt = 0; xs.forEach((t, i) => { const vp = ativo(P.ROB[t.r]).vp; o.pontos += g[i] / vp; o.ptsCtt += g[i] / (vp * Math.max(1, t.ct)); });
+    o.ptsOp = o.ptsCtt / o.n;
     o.gDurG = mean(xs.filter((t, i) => g[i] > 0).map(t => t.dur)); o.gDurL = mean(xs.filter((t, i) => g[i] < 0).map(t => t.dur));
     o.patrimNec = Lx.length ? Math.abs(Math.min(...Lx)) : 0;
     let c = 0, pk = 0, dd = 0; for (const v of x) { c += v; if (c > pk) pk = c; if (pk - c > dd) dd = pk - c; } o.patrimMax = pk; o.ddTrade = dd;
@@ -55,9 +58,16 @@
   }
 
   /* -------- por dia (um robô) -------- */
-  function diario(r, dias, extra) {
-    const P = window.P, R = P.RES[r], rob = P.ROB[r];
-    const idx = dias.filter(d => !isNaN(R.f[d])), v = idx.map(d => R.f[d]), mn = idx.map(d => R.mn[d]), mx = idx.map(d => R.mx[d]);
+  function diario(r, dias) {
+    const P = window.P, R = P.RES[r];
+    const idx = dias.filter(d => !isNaN(R.f[d]));
+    const o = serie(idx, idx.map(d => R.f[d]), idx.map(d => R.mn[d]), idx.map(d => R.mx[d]), P.ROB[r]);
+    if (o.n) o.mp = Math.max(...idx.map(d => R.mp[d]));
+    return o;
+  }
+  /* indicadores diários de uma série (um robô, ou a soma da carteira na linha TOTAL) */
+  function serie(idx, v, mn, mx, rob) {
+    const P = window.P; rob = rob || {};
     const n = v.length, o = { n, idx, v };
     if (!n) return o;
     o.tot = sum(v); o.porDia = o.tot / n; o.pctPos = 100 * v.filter(x => x > 0).length / n;
@@ -87,7 +97,6 @@
     o.virou = 100 * mx.filter((a, i) => a >= 100 && v[i] <= 0).length / n;
     if (rob.mt > 0) { o.pctMeta = 100 * v.filter(x => x >= 0.9 * rob.mt).length / n; o.tocouMeta = 100 * mx.filter(a => a >= 0.95 * rob.mt).length / n; }
     if (rob.pd > 0) { o.pctPerda = 100 * mn.filter(a => a <= -0.95 * rob.pd).length / n; o.usoPerda = 100 * mean(mn) / rob.pd; }
-    o.mp = Math.max(...idx.map(d => R.mp[d]));
     return o;
   }
 
@@ -144,5 +153,5 @@
   }
   const selosHtml = (ss, curto) => ss.map(s => `<span class="selo ${s.c}" title="${s.d}"><i>${s.i}</i>${curto ? '' : s.t}</span>`).join('');
 
-  window.M = { sum, mean, sd, med, pctl, maxRun, ativo, operacoes, diario, mcDD, linha, pontuar, selosHtml };
+  window.M = { sum, mean, sd, med, pctl, maxRun, ativo, operacoes, diario, serie, mcDD, linha, pontuar, selosHtml };
 })();
