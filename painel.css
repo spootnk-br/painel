@@ -129,6 +129,24 @@ table.t th.fix { z-index: 3; background: var(--surface-2); }
 .tip .linha { display: flex; justify-content: space-between; gap: 14px; }
 .tip .linha i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; }
 
+/* famílias (lista agrupada) */
+table.fam tr.fam-g td { background: var(--surface-2); cursor: pointer; padding-top: 7px; padding-bottom: 7px; }
+table.fam tr.fam-g:hover td { background: var(--hover); }
+table.fam tr.fam-r { cursor: pointer; }
+table.fam tr.fam-r td:nth-child(2) { padding-left: 22px; }
+table.fam .fam-ind { color: var(--muted); display: inline-block; width: 12px; }
+table.fam .fam-gbtn { cursor: pointer; margin-left: 6px; text-decoration: none; opacity: .75; }
+table.fam .fam-gbtn:hover { opacity: 1; }
+table.fam tr.fam-graf td { background: var(--surface-1); white-space: normal; text-align: left; padding: 10px 14px 14px; cursor: default; }
+table.fam tr.fam-graf:hover { background: none; }
+.mini { display: grid; grid-template-columns: 220px 1fr; gap: 16px; align-items: start; }
+@media (max-width: 900px) { .mini { grid-template-columns: 1fr; } }
+.mini-k { display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+.mini-k > div { display: flex; justify-content: space-between; gap: 10px; border-bottom: 1px solid var(--grid); padding-bottom: 4px; }
+.mini-k span { color: var(--text-secondary); }
+.mini-k b { font-weight: 600; font-variant-numeric: tabular-nums; }
+.mini-g { min-width: 0; }
+
 /* mapa de calor */
 .heat { border-collapse: separate; border-spacing: 2px; font-size: 11px; }
 .heat td.c { width: 18px; min-width: 18px; height: 18px; border-radius: 3px; cursor: pointer; }

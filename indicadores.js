@@ -352,6 +352,77 @@
     host.innerHTML = h;
   }
 
+  /* ================= FAMÍLIAS (lista agrupada, como a tela de automações do Profit) ================= */
+  R.familias = host => {
+    const S = P.S, C = P.CTX, rows = linhas();
+    if (!rows.length) { host.innerHTML = '<div class="vazio">Nenhum robô no filtro.</div>'; return; }
+    S.abertos = S.abertos || []; S.grafs = S.grafs || [];
+    const por = S.agrupar === 'estrategia' ? 'estrategia' : 'familia';
+    const chave = x => por === 'estrategia' ? (x.est || '(removido)') : x.fam;
+    const ultimo = C.dias[C.dias.length - 1];
+    const grupos = {}; rows.forEach(x => (grupos[chave(x)] = grupos[chave(x)] || []).push(x));
+    const ops = {}; for (const o of C.opsF) (ops[o.r] = ops[o.r] || []).push(o);
+    const G_ = Object.entries(grupos).map(([k, xs]) => {
+      const rs = xs.map(x => x.r), idx = C.dias.filter(d => rs.some(r => !isNaN(P.RES[r].f[d])));
+      const v = idx.map(d => { let s = 0; for (const r of rs) { const y = P.RES[r].f[d]; if (!isNaN(y)) s += y; } return s; });
+      const d = M.serie(idx, v, v, v, {}), o = M.operacoes([].concat(...rs.map(r => ops[r] || [])));
+      const ult = rs.reduce((s, r) => s + (isNaN(P.RES[r].f[ultimo]) ? 0 : P.RES[r].f[ultimo]), 0);
+      return { k, xs, d, o, ult, nAt: xs.filter(x => P.ROB[x.r].at).length };
+    }).sort((a, b) => b.o.liq - a.o.liq || b.d.tot - a.d.tot);
+    const cel = (d, o, ult) => `<td>${F.n0(d.n)}</td><td>${F.n0(o.n)}</td><td>${o.n ? F.pct(o.gAcerto, 1) : '–'}</td><td class="${F.cls(o.pontos)}">${o.n ? F.n0(o.pontos) + ' pts' : '–'}</td>
+      <td class="${F.cls(o.liq)}">${F.brl(o.liq)}</td><td class="${F.cls(d.porDia)}">${F.brl(d.porDia)}</td><td class="${ult == null ? 'mut' : F.cls(ult)}">${ult == null ? '–' : F.sbrl(ult)}</td>
+      <td class="${d.dd > 0 ? 'neg' : ''}">${F.brl(-d.dd)}</td><td>${G.spark(d.v, 100, 22)}</td>`;
+    const NC = 11;
+    let h = `<div class="card"><div class="cab"><h2>Robôs por ${por === 'estrategia' ? 'estratégia' : 'família'}</h2>
+      <div class="ctrl">Agrupar por <select id="faPor"><option value="familia" ${por === 'familia' ? 'selected' : ''}>Família</option><option value="estrategia" ${por === 'estrategia' ? 'selected' : ''}>Estratégia (como no Profit)</option></select>
+      <button class="btn" id="faAbre">Abrir todas</button><button class="btn" id="faFecha">Fechar todas</button></div></div>
+      <div class="sub" style="margin-bottom:6px">Clique na família para ver os robôs; clique no robô (ou em 📈 da família) para abrir o gráfico aqui mesmo. Período e filtros vêm da faixa do topo. "Últ. pregão" = ${F.dataBrA(P.D.dias[ultimo])}.</div>
+      <div class="tw" style="max-height:none"><table class="t fam"><thead><tr><th class="l" style="width:26px"></th><th class="l">Nome</th><th>Pregões</th><th>Ops</th><th>Assertividade</th><th>Pontos</th><th>Saldo líquido</th><th>R$/dia</th><th>Últ. pregão</th><th>Queda máx</th><th>Curva</th></tr></thead><tbody>`;
+    for (const g of G_) {
+      const ab = S.abertos.includes(por + ':' + g.k), gk = 'g:' + por + ':' + g.k;
+      h += `<tr class="fam-g" data-g="${F.esc(g.k)}"><td class="l">${ab ? '▾' : '▸'}</td><td class="l"><b>${F.esc(g.k)}</b> <span class="selo">${g.xs.length} robô${g.xs.length > 1 ? 's' : ''}${g.nAt < g.xs.length ? ` · ${g.xs.length - g.nAt} removido(s)` : ''}</span>
+        <a class="fam-gbtn" data-gg="${F.esc(gk)}" title="gráfico da família">📈</a></td>${cel(g.d, g.o, g.ult)}</tr>`;
+      if (S.grafs.includes(gk)) h += `<tr class="fam-graf"><td colspan="${NC}"><div id="fg_${hashId(gk)}"></div></td></tr>`;
+      if (!ab) continue;
+      for (const x of g.xs.slice().sort((a, b) => b.o.liq - a.o.liq || b.d.tot - a.d.tot)) {
+        const w = P.ROB[x.r].w, aberto = S.grafs.includes(w), ult = isNaN(P.RES[x.r].f[ultimo]) ? null : P.RES[x.r].f[ultimo];
+        h += `<tr class="fam-r ${aberto ? 'sel' : ''}" data-w="${w}"><td class="l"></td><td class="l"><span class="fam-ind">${aberto ? '▾' : '▸'}</span> ${F.esc(x.nome)}${P.ROB[x.r].at ? '' : ' <span class="mut">(removido)</span>'} ${M.selosHtml(x.selos, true)}
+          <div class="sub" style="padding-left:16px">${[P.ROB[x.r].g && P.ROB[x.r].g.split('/')[1] + ' min', P.ROB[x.r].mt > 0 && `meta ${F.n0(P.ROB[x.r].mt)} / perda ${F.n0(P.ROB[x.r].pd)}`, 'score ' + Math.round(x.score)].filter(Boolean).join(' · ')}</div></td>${cel(x.d, x.o, ult)}</tr>`;
+        if (aberto) h += `<tr class="fam-graf"><td colspan="${NC}"><div id="fr_${w}"></div></td></tr>`;
+      }
+    }
+    h += '</tbody></table></div></div>';
+    host.innerHTML = h;
+    $('faPor').onchange = e => { S.agrupar = e.target.value; P.salvar(); R.familias(host); };
+    $('faAbre').onclick = () => { S.abertos = G_.map(g => por + ':' + g.k); P.salvar(); R.familias(host); };
+    $('faFecha').onclick = () => { S.abertos = []; S.grafs = []; P.salvar(); R.familias(host); };
+    host.querySelectorAll('tr.fam-g').forEach(tr => tr.onclick = e => { if (e.target.closest('.fam-gbtn')) return; const k = por + ':' + tr.dataset.g; S.abertos = S.abertos.includes(k) ? S.abertos.filter(z => z !== k) : [...S.abertos, k]; P.salvar(); R.familias(host); });
+    host.querySelectorAll('.fam-gbtn').forEach(a => a.onclick = e => { e.stopPropagation(); const k = a.dataset.gg; S.grafs = S.grafs.includes(k) ? S.grafs.filter(z => z !== k) : [...S.grafs, k]; P.salvar(); R.familias(host); });
+    host.querySelectorAll('tr.fam-r').forEach(tr => tr.onclick = e => { if (e.target.closest('a')) return; const w = tr.dataset.w; S.grafs = S.grafs.includes(w) ? S.grafs.filter(z => z !== w) : [...S.grafs, w]; P.salvar(); R.familias(host); });
+    // gráficos inline
+    for (const g of G_) { const gk = 'g:' + por + ':' + g.k; const el = $('fg_' + hashId(gk)); if (el) miniGraf(el, g.d, g.o, null, g.xs); }
+    for (const g of G_) for (const x of g.xs) { const el = $('fr_' + P.ROB[x.r].w); if (el) miniGraf(el, x.d, x.o, x.r); }
+  };
+  function hashId(s) { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) | 0; return (h >>> 0).toString(36); }
+  function miniGraf(el, d, o, r, membros) {
+    const lab = d.idx.map(i => P.D.dias[i]);
+    el.innerHTML = `<div class="mini"><div class="mini-k">
+        <div><span>Saldo líquido (operações)</span><b class="${F.cls(o.liq)}">${F.brl(o.liq)}</b></div>
+        <div><span>Soma dos dias (Profit)</span><b class="${F.cls(d.tot)}">${F.brl(d.tot)}</b></div>
+        <div><span>Pontos</span><b class="${F.cls(o.pontos)}">${o.n ? F.n0(o.pontos) : '–'}</b></div>
+        <div><span>Operações · acerto</span><b>${F.n0(o.n)} · ${o.n ? F.pct(o.gAcerto, 1) : '–'}</b></div>
+        <div><span>Fator de lucro</span><b>${o.n ? (inf(o.gPF) || F.n2(o.gPF)) : '–'}</b></div>
+        <div><span>% dias positivos</span><b>${F.pct(d.pctPos)}</b></div>
+        <div><span>Melhor · pior dia</span><b>${F.n0(d.best)} · <span class="neg">${F.n0(d.worst)}</span></b></div>
+        <div><span>Metades · últ. 10</span><b>${F.n0(d.h1)} · ${F.n0(d.h2)} · ${F.n0(d.u10)}</b></div>
+        ${r != null ? `<div><a data-robo="${r}" class="btn" style="text-align:center">Abrir detalhe completo ›</a></div>` : ''}
+      </div><div class="mini-g"><div class="mini-acum"></div><div class="mini-bar"></div></div></div>`;
+    const tip = i => `<b>${F.dataBrA(lab[i])}</b><div class="linha"><span>Dia</span><span>${F.sbrl(d.v[i])}</span></div><div class="linha"><span>Acumulado</span><span>${F.brl(d.E[i])}</span></div>`;
+    G.line(el.querySelector('.mini-acum'), { labels: lab, series: [{ name: 'Acumulado', color: 'var(--s1)', vals: d.E }], h: 170, fmtX: F.dataBr, tip, onClick: i => { P.S.dia = d.idx[i]; P.abrirAba('dia'); } });
+    G.bars(el.querySelector('.mini-bar'), { labels: lab, vals: d.v, h: 130, fmtX: F.dataBr, tip, onClick: i => { P.S.dia = d.idx[i]; P.abrirAba('dia'); } });
+    P.ligarNomes(el);
+  }
+
   /* ================= CARTEIRA ================= */
   R.carteira = host => {
     const C = P.CTX, rows = linhas().slice().sort((a, b) => b.score - a.score);
