@@ -82,6 +82,13 @@
   function opcoes(campo, vazio) { const c = {}; for (const r of ROB) { const v = r[campo] || vazio; (c[v] = c[v] || []).push(r); } return Object.keys(c).sort().map(v => ({ v, t: v, rob: c[v] })); }
   const porStatus = { visivel: o => o.rob.some(statusOk), contar: o => o.rob.filter(statusOk).length };
   function montarFiltros() {
+    // conferencia dos dados (motor\confere_dia.ps1): faixa no topo; problema nos dados = alerta, robo parado / pregao sem log = aviso
+    (() => { const el = $('conferencia'); if (!el || !D.conf) return; const it = D.conf.itens || [];
+      const grave = it.filter(i => ['RESULTADO', 'SEM_SERIE', 'SEM_EXEC', 'OPERACOES'].includes(i.t) || (i.t === 'PREGAO' && /^log existe/.test(i.x)));
+      const nivel = grave.length ? 'conf-crit' : it.length ? 'conf-warn' : 'conf-ok';
+      const tit = grave.length ? `⚠ Conferência dos dados: ${grave.length} problema(s) — os números podem estar errados` : it.length ? `ⓘ Conferência dos dados: dados batem com o log · ${it.length} aviso(s)` : '✓ Conferência dos dados: tudo bate com as execuções do log';
+      const lst = it.map(i => `<li><b>${F.esc(i.t)}</b> ${F.esc(F.dataBr(i.d))}${i.r ? ' · ' + F.esc(i.r) : ''} — ${F.esc(i.x)}</li>`).join('');
+      el.className = 'conf ' + nivel; el.innerHTML = it.length ? `<details><summary>${tit}</summary><ul>${lst}</ul></details>` : `<div>${tit}</div>`; })();
     $('geradoEm').textContent = `Atualizado em ${D.gerado} · ${ND} pregões (${F.dataBrA(D.dias[0])} a ${F.dataBrA(D.dias[ND - 1])}) · ${NR} carteiras · ${OPS.length.toLocaleString('pt-BR')} operações`;
     $('fSemana').innerHTML = [1, 2, 3, 4, 5].map(d => `<button type="button" class="chip" data-d="${d}">${SEM[d]}</button>`).join('');
     $('fSemana').querySelectorAll('.chip').forEach(c => c.onclick = () => { const d = +c.dataset.d; S.semana = S.semana.includes(d) ? S.semana.filter(x => x !== d) : [...S.semana, d]; syncCampos(); mudou(); });

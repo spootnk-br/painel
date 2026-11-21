@@ -174,3 +174,13 @@ table.fam tr.fam-graf:hover { background: none; }
 .pag { display: flex; gap: 8px; align-items: center; margin-top: 6px; font-size: 12px; color: var(--muted); }
 .ctrl { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 12px; color: var(--text-secondary); }
 .ctrl select, .ctrl input { font: inherit; font-size: 12px; padding: 3px 6px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary); }
+
+/* conferencia dos dados (faixa no topo) */
+.conf { margin: 0 0 12px; padding: 8px 12px; border-radius: 6px; font-size: 13px; border: 1px solid var(--grid, rgba(0,0,0,.12)); }
+.conf summary { cursor: pointer; font-weight: 600; }
+.conf ul { margin: 6px 0 0 18px; padding: 0; }
+.conf li { margin: 2px 0; }
+.conf-ok { border-left: 4px solid var(--good); }
+.conf-ok div { color: var(--good-text); }
+.conf-warn { border-left: 4px solid var(--warning); }
+.conf-crit { border-left: 4px solid var(--critical); background: color-mix(in srgb, var(--critical) 8%, transparent); }
