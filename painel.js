@@ -14,7 +14,7 @@
   const SLOTS = ['var(--s1)', 'var(--s2)', 'var(--s3)', 'var(--s4)', 'var(--s5)', 'var(--s6)', 'var(--s7)', 'var(--s8)'];
 
   /* ---------------- estado / filtros ---------------- */
-  const PADRAO = { preset: 'tudo', de: D.dias[0], ate: D.dias[ND - 1], semana: [1, 2, 3, 4, 5], regime: '', ampMin: '', ampMax: '', status: 'ativo', conta: null, familia: null, robos: null, estrategia: null, grafico: null,
+  const PADRAO = { preset: 'tudo', de: D.dias[0], ate: D.dias[ND - 1], semana: [1, 2, 3, 4, 5], regime: '', ampMin: '', ampMax: '', status: 'ativo', tipo: '', conta: null, familia: null, robos: null, estrategia: null, grafico: null,
     busca: '', minDias: '', minDia: '', lado: '', horaDe: '', horaAte: '', durMin: '', durMax: '', resOp: '', antes: '', aba: 'geral', robo: null, comp: [], dia: null, sort: {}, calorClamp: 500, grupo: 'familia' };
   let S; try { S = Object.assign({}, PADRAO, JSON.parse(localStorage.getItem('painelRobos.v1') || '{}')); } catch (e) { S = Object.assign({}, PADRAO); }
   const salvar = () => { try { localStorage.setItem('painelRobos.v1', JSON.stringify(S)); } catch (e) { } };
@@ -41,7 +41,7 @@
     const busca = S.busca.trim().toLowerCase().split(/[,;]+/).map(s => s.trim()).filter(Boolean);
     // robô escolhido na lista entra sempre (mesmo removido ou de outra família); senão valem os outros filtros
     let robos = ROB.filter(r => S.robos ? S.robos.includes(r.w) : ((S.status === 'todos' || (S.status === 'ativo' ? r.at : !r.at))
-      && (!S.conta || S.conta.includes(r.c)) && (!S.familia || S.familia.includes(r.f)) && (!S.estrategia || S.estrategia.includes(r.e || '(removido)'))
+      && (!S.tipo || (r.tc || 'Simulada') === S.tipo) && (!S.conta || S.conta.includes(r.c)) && (!S.familia || S.familia.includes(r.f)) && (!S.estrategia || S.estrategia.includes(r.e || '(removido)'))
       && (!S.grafico || S.grafico.includes(r.g || '(removido)')) && (!busca.length || busca.some(b => r.n.toLowerCase().includes(b))))).map(r => r.i);
     const minDias = num(S.minDias), minDia = num(S.minDia);
     robos = robos.filter(r => { let n = 0, s = 0; for (const d of dias) { const v = RES[r].f[d]; if (!isNaN(v)) { n++; s += v; } }
@@ -78,7 +78,7 @@
     sync(); host._sync = sync;
   }
   // opções de filtro com os robôs de cada uma: a lista mostra só as que têm robô na Situação escolhida (no Profit hoje / removidos / todos)
-  const statusOk = r => S.status === 'todos' || (S.status === 'ativo' ? r.at : !r.at);
+  const statusOk = r => (S.status === 'todos' || (S.status === 'ativo' ? r.at : !r.at)) && (!S.tipo || (r.tc || 'Simulada') === S.tipo);
   function opcoes(campo, vazio) { const c = {}; for (const r of ROB) { const v = r[campo] || vazio; (c[v] = c[v] || []).push(r); } return Object.keys(c).sort().map(v => ({ v, t: v, rob: c[v] })); }
   const porStatus = { visivel: o => o.rob.some(statusOk), contar: o => o.rob.filter(statusOk).length };
   function montarFiltros() {
@@ -93,13 +93,13 @@
     $('fSemana').innerHTML = [1, 2, 3, 4, 5].map(d => `<button type="button" class="chip" data-d="${d}">${SEM[d]}</button>`).join('');
     $('fSemana').querySelectorAll('.chip').forEach(c => c.onclick = () => { const d = +c.dataset.d; S.semana = S.semana.includes(d) ? S.semana.filter(x => x !== d) : [...S.semana, d]; syncCampos(); mudou(); });
     multi('fConta', 'conta', opcoes('c'), porStatus); multi('fFamilia', 'familia', opcoes('f'), porStatus);
-    multi('fRobo', 'robos', ROB.slice().sort((a, b) => (b.at - a.at) || a.n.localeCompare(b.n)).map(r => ({ v: r.w, t: r.n + (r.at ? '' : ' (removido)'), f: r.f, at: r.at, c: r.c })),
-      { busca: true, masc: true, unico: true, nome: w => (ROB.find(r => r.w === w) || {}).n || w, visivel: o => (S.status === 'todos' || (S.status === 'ativo' ? o.at : !o.at)) && (!S.familia || S.familia.includes(o.f)) && (!S.conta || S.conta.includes(o.c)) }); multi('fEstrategia', 'estrategia', opcoes('e', '(removido)'), porStatus); multi('fGrafico', 'grafico', opcoes('g', '(removido)'), porStatus);
+    multi('fRobo', 'robos', ROB.slice().sort((a, b) => (b.at - a.at) || a.n.localeCompare(b.n)).map(r => ({ v: r.w, t: r.n + (r.at ? '' : ' (removido)'), f: r.f, at: r.at, c: r.c, tc: r.tc })),
+      { busca: true, masc: true, unico: true, nome: w => (ROB.find(r => r.w === w) || {}).n || w, visivel: o => statusOk(o) && (!S.familia || S.familia.includes(o.f)) && (!S.conta || S.conta.includes(o.c)) }); multi('fEstrategia', 'estrategia', opcoes('e', '(removido)'), porStatus); multi('fGrafico', 'grafico', opcoes('g', '(removido)'), porStatus);
     $('fDe').min = $('fAte').min = D.dias[0]; $('fDe').max = $('fAte').max = D.dias[ND - 1];
     const liga = (id, chave, ev, fn) => $(id).addEventListener(ev || 'change', () => { S[chave] = $(id).value; if (fn) fn(); mudou(); });
     liga('fPreset', 'preset', 'change', () => { if (S.preset !== 'custom') aplicarPreset(); syncCampos(); });
     liga('fDe', 'de', 'change', () => { S.preset = 'custom'; syncCampos(); }); liga('fAte', 'ate', 'change', () => { S.preset = 'custom'; syncCampos(); });
-    liga('fRegime', 'regime'); liga('fAmpMin', 'ampMin'); liga('fAmpMax', 'ampMax'); liga('fStatus', 'status'); liga('fBusca', 'busca', 'input');
+    liga('fRegime', 'regime'); liga('fAmpMin', 'ampMin'); liga('fAmpMax', 'ampMax'); liga('fStatus', 'status'); liga('fTipo', 'tipo'); liga('fBusca', 'busca', 'input');
     liga('fMinDias', 'minDias'); liga('fMinDia', 'minDia'); liga('fLado', 'lado'); liga('fHoraDe', 'horaDe'); liga('fHoraAte', 'horaAte');
     liga('fDurMin', 'durMin'); liga('fDurMax', 'durMax'); liga('fResOp', 'resOp'); liga('fAntes', 'antes');
     $('btnLimpar').onclick = () => { const keep = { aba: S.aba, robo: S.robo, comp: S.comp, sort: S.sort, calorClamp: S.calorClamp, grupo: S.grupo }; S = Object.assign({}, PADRAO, keep); aplicarPreset(); syncCampos(); mudou(); };
@@ -111,7 +111,7 @@
   }
   function syncCampos() {
     const set = (id, v) => { $(id).value = v == null ? '' : v; };
-    set('fPreset', S.preset); set('fDe', S.de); set('fAte', S.ate); set('fRegime', S.regime); set('fAmpMin', S.ampMin); set('fAmpMax', S.ampMax); set('fStatus', S.status);
+    set('fPreset', S.preset); set('fDe', S.de); set('fAte', S.ate); set('fRegime', S.regime); set('fAmpMin', S.ampMin); set('fAmpMax', S.ampMax); set('fStatus', S.status); set('fTipo', S.tipo);
     set('fBusca', S.busca); set('fMinDias', S.minDias); set('fMinDia', S.minDia); set('fLado', S.lado); set('fHoraDe', S.horaDe); set('fHoraAte', S.horaAte);
     set('fDurMin', S.durMin); set('fDurMax', S.durMax); set('fResOp', S.resOp); set('fAntes', S.antes);
     $('fSemana').querySelectorAll('.chip').forEach(c => c.classList.toggle('on', S.semana.includes(+c.dataset.d)));
@@ -313,9 +313,9 @@
 
   /* ---------------- GRUPOS ---------------- */
   R.grupos = host => {
-    const OPC = { familia: 'Família', estrategia: 'Estratégia', grafico: 'Tempo gráfico', conta: 'Conta', semana: 'Dia da semana', regime: 'Regime A10', mes: 'Mês', amp: 'Faixa de amplitude do dia', situacao: 'Situação' };
+    const OPC = { familia: 'Família', estrategia: 'Estratégia', grafico: 'Tempo gráfico', tipo: 'Tipo de conta (real/simulada)', conta: 'Conta', semana: 'Dia da semana', regime: 'Regime A10', mes: 'Mês', amp: 'Faixa de amplitude do dia', situacao: 'Situação' };
     const g = S.grupo in OPC ? S.grupo : 'familia';
-    const chaveRobo = { familia: r => ROB[r].f, estrategia: r => ROB[r].e || '(removido)', grafico: r => ROB[r].g ? ROB[r].g.split('/')[1] + ' min' : '(removido)', conta: r => ROB[r].c, situacao: r => ROB[r].at ? 'No Profit hoje' : 'Removido' };
+    const chaveRobo = { familia: r => ROB[r].f, estrategia: r => ROB[r].e || '(removido)', grafico: r => ROB[r].g ? ROB[r].g.split('/')[1] + ' min' : '(removido)', tipo: r => ROB[r].tc || 'Simulada', conta: r => ROB[r].c, situacao: r => ROB[r].at ? 'No Profit hoje' : 'Removido' };
     const chaveDia = { semana: d => DIA[d].dow + ' ' + SEM[DIA[d].dow], regime: d => DIA[d].a10 == null ? 'sem A10' : DIA[d].a10 >= 3000 ? 'Amplo (≥ 3000)' : 'Estreito (< 3000)', mes: d => D.dias[d].slice(0, 7),
       amp: d => { const a = DIA[d].amp; return a == null ? 'sem dado' : a < 2000 ? '1: < 2000' : a < 3000 ? '2: 2000–3000' : a < 4000 ? '3: 3000–4000' : '4: ≥ 4000'; } };
     const acc = {};

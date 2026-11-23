@@ -174,7 +174,7 @@
     const lab = d.idx.map(i => P.D.dias[i]);
     host.innerHTML = cabDetalhe(r, rows) + `
       <div class="card"><div class="cab"><div><h2 style="font-size:16px;margin:0">${F.esc(rob.n)} ${M.selosHtml(x.selos)}</h2>
-        <div class="cfg">${[rob.f, rob.e && 'estratégia ' + rob.e, rob.g && 'gráfico ' + rob.g.split('/')[1] + ' min', rob.c, rob.at ? 'no Profit hoje' : 'removido do Profit', rob.mt > 0 && `meta ${F.n0(rob.mt)} / perda ${F.n0(rob.pd)}`, rob.q && 'contratos ' + rob.q, rob.cf && 'candle ' + rob.cf, rob.jn && 'janela ' + rob.jn, at.nome].filter(Boolean).map(F.esc).join(' · ')}</div>
+        <div class="cfg">${[rob.f, rob.e && 'estratégia ' + rob.e, rob.g && 'gráfico ' + rob.g.split('/')[1] + ' min', rob.tc === 'Real' ? 'CONTA REAL · ' + rob.c : rob.c,rob.at ? 'no Profit hoje' : 'removido do Profit', rob.mt > 0 && `meta ${F.n0(rob.mt)} / perda ${F.n0(rob.pd)}`, rob.q && 'contratos ' + rob.q, rob.cf && 'candle ' + rob.cf, rob.jn && 'janela ' + rob.jn, at.nome].filter(Boolean).map(F.esc).join(' · ')}</div>
         ${x.foraFiltro ? '<div class="sub">Este robô está fora dos filtros de robô atuais; score calculado só com ele (sem comparação).</div>' : ''}</div></div>
         ${rob.inp ? `<details><summary class="sub" style="cursor:pointer">Inputs</summary><div class="cfg"><code>${F.esc(rob.inp)}</code></div></details>` : ''}</div>
       <div class="tiles">
