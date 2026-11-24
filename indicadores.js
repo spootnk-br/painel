@@ -529,7 +529,27 @@
     const out = new Float64Array(it); for (let k = 0; k < it; k++) { let E = 0, pk = 0, dd = 0; for (let i = 0; i < H; i++) { E += v[Math.floor(rnd() * v.length)]; if (E > pk) pk = E; if (pk - E > dd) dd = pk - E; } out[k] = dd; }
     return M.pctl(Array.from(out), 0.95);
   }
-  function cfg() { const S = P.S; S.dec = Object.assign({ pct: 30 }, S.dec || {}); delete S.dec.margem; delete S.dec.folga; return S.dec; }
+  function cfg() { const S = P.S; if (!S.dec) S.dec = {}; const c = S.dec; if (c.pct == null) c.pct = 30; if (c.cap == null) c.cap = ''; delete c.margem; delete c.folga; return c; }   // mesmo objeto sempre (senão a mudança se perde)
+  /* -------- plano de crescimento (24/11: "começar baixo com robôs confiáveis e ir crescendo") --------
+     Carteira de um conjunto de robôs: R$/dia = soma dos R$/dia (com slippage) de cada um;
+     rebaixamento = maior(histórico, P95 projetado 60 pregões) da soma diária nos pregões em que TODOS rodaram
+     (assim a correlação entra: robôs que se compensam pedem menos capital que a soma). Com < 10 pregões em comum: soma dos rebaixamentos (conservador). */
+  function conjunto(xs, c) {
+    const rs = xs.map(x => x.r), C = P.CTX, dc = C.dias.filter(d => rs.every(r => !isNaN(P.RES[r].f[d])));
+    const v = Ind.serieSoma(rs, dc), dd = Ind.ddDe(v), p95 = dc.length >= 10 ? quedaP95(v) : NaN;
+    const rb = dc.length >= 10 ? Math.max(dd, p95) : M.sum(xs.map(x => x.rb));
+    return { xs, rs, dc, v, dd, p95, rb, comum: dc.length, real: M.sum(xs.map(x => x.real)), ct: M.sum(xs.map(x => x.ct)), capital: rb / (c.pct / 100) };
+  }
+  // guloso: a cada etapa entra o robô pronto que dá mais R$/dia por real de capital a mais, sem passar de 5 contratos somados
+  function plano(pr, c) {
+    const et = []; let set = [], rest = pr.slice();
+    while (rest.length) { const ant = et.length ? et[et.length - 1] : { real: 0, capital: 0 }; let best = null;
+      for (const x of rest) { const cj = conjunto(set.concat([x]), c); if (cj.ct > 5) continue;
+        const sc = cj.capital <= ant.capital ? 1e9 + cj.real : (cj.real - ant.real) / (cj.capital - ant.capital); if (!best || sc > best.sc) best = { x, cj, sc }; }
+      if (!best) break; set = set.concat([best.x]); rest = rest.filter(y => y !== best.x); best.cj.add = best.x; et.push(best.cj); }
+    et.forEach((e, i) => { if (!i) return; const a = et[i - 1]; e.falta = Math.max(0, e.capital - a.capital); e.dias = a.real > 0 ? e.falta / a.real : Infinity; });
+    return { et, fora: rest };
+  }
   function avaliar(r, dias, ops, c) {
     const x = M.linha(r, dias, ops), d = x.d, o = x.o, rob = P.ROB[r];
     if (!d.n) return null;
@@ -573,12 +593,11 @@
     const C = P.CTX, c = cfg(), rows = linhasDec();
     const reais = P.ROB.filter(r => r.tc === 'Real');
     const pr = rows.filter(x => x.ver === 'pronto'), ob = rows.filter(x => x.ver === 'observar'), te = rows.filter(x => x.ver === 'teste'), na = rows.filter(x => x.ver === 'nao');
-    // carteira só com os prontos
-    let cart = null;
-    if (pr.length) { const rs = pr.map(x => x.r), dc = C.dias.filter(d => rs.some(r => !isNaN(P.RES[r].f[d])));   // só pregões em que algum pronto já rodava
-      const v = Ind.serieSoma(rs, dc), dd = Ind.ddDe(v), slip = M.sum(pr.map(x => x.slip * x.n)) / Math.max(1, dc.length);
-      const p95 = dc.length >= 10 ? quedaP95(v) : NaN, ct = M.sum(pr.map(x => x.ct)), real = M.sum(v) / Math.max(1, dc.length) - slip;
-      cart = { n: pr.length, real, dd, p95, ct, capital: Math.max(dd, isFinite(p95) ? p95 : 0) / (c.pct / 100), v, dc }; }
+    const pl = plano(pr, c), cap = +c.cap > 0 ? +c.cap : null;
+    const aqui = cap == null ? -1 : pl.et.reduce((k, e, i) => e.capital <= cap ? i : k, -1);
+    const meses = d => !isFinite(d) ? '—' : d < 1 ? 'já' : `~${Math.ceil(d)} pregões (${F.n1(d / 21)} ${d / 21 >= 2 ? 'meses' : 'mês'})`;
+    // fila: robôs em observação, do mais perto de virar pronto (menos critérios faltando, depois mais t-dia)
+    const fila = ob.slice().sort((a, b) => a.crit.filter(k => !k.ok).length - b.crit.filter(k => !k.ok).length || b.d.tdia - a.d.tdia).slice(0, 6);
     host.innerHTML = `
       <div class="card"><div class="cab"><div><h2>O que levar para a conta real</h2><div class="sub">Robôs do simulador no período filtrado. Resultados já descontam slippage de 1 tick (5 pts) na entrada e na saída. Passe o mouse no veredito para ver os 8 critérios.</div></div>
         <div class="ctrl" title="capital = rebaixamento de referência ÷ este %. Ex.: rebaixamento R$ 1.500 com 30% → capital R$ 5.000">No pior rebaixamento aceito perder <select id="dcPct">${[15, 20, 25, 30, 40, 50].map(f => `<option value="${f}" ${f === c.pct ? 'selected' : ''}>${f}% da conta</option>`).join('')}</select></div></div>
@@ -587,12 +606,21 @@
         ${P.tile('Observar', ob.length, 'positivos, falta algum critério')}
         ${P.tile('Em teste', te.length, 'menos de 20 pregões: ainda não dá para julgar')}
         ${P.tile('Não levar', na.length, 'perdem, piorando ou rebaixamento grande', na.length ? 'neg' : '')}
-        ${cart ? P.tile('Carteira dos prontos', F.brl(cart.real) + '/dia', `rebaix. máx ${F.brl(-cart.dd)} · projetado ${F.brl(-cart.p95)}`) + P.tile('Capital p/ os prontos', F.brl(cart.capital), `${F.pct(100 * 21 * cart.real / cart.capital, 1)} ao mês · ${cart.ct} contratos somados${cart.ct > 5 ? ' (conta real: 5)' : ''}`, cart.ct > 5 ? 'neg' : '') : P.tile('Carteira dos prontos', '–', 'nenhum robô pronto no filtro')}
       </div></div>
+      <div class="card"><div class="cab"><div><h2>Plano de crescimento: começar pequeno</h2><div class="sub">Só robôs prontos (confiáveis). Começa pelo que dá mais resultado por real de capital; os próximos entram quando o lucro levar a conta até o capital da etapa. No máximo 5 contratos somados.</div></div>
+        <div class="ctrl">Capital que tenho hoje R$ <input type="number" id="dcCap" value="${cap || ''}" placeholder="ex.: 3000" step="500" min="0" style="width:90px"></div></div>
+        ${!pl.et.length ? '<div class="vazio">Nenhum robô pronto no filtro: ainda não há carteira confiável para começar.</div>' : `
+        <div id="dcAviso" style="margin:6px 0 10px">${cap == null ? '<span class="sub">Informe o capital que você tem para ver em que etapa começa.</span>'
+          : aqui < 0 ? `<b>Com ${F.brl(cap)} ainda não fecha a 1ª etapa (${F.brl(pl.et[0].capital)}).</b> Rodando ${F.esc(pl.et[0].add.nome)} assim, o rebaixamento de referência (${F.brl(pl.et[0].rb)}) levaria <b class="neg">${F.pct(100 * pl.et[0].rb / cap)}</b> da conta. Opções: aceitar perder mais (seletor acima) ou juntar ${F.brl(pl.et[0].capital - cap)}.`
+          : `<b>Com ${F.brl(cap)} você começa na etapa ${aqui + 1}</b>: ${pl.et[aqui].xs.map(x => F.esc(x.nome)).join(' + ')} · ${F.brl(pl.et[aqui].real)}/dia esperado.${pl.et[aqui + 1] ? ` Próxima etapa (${F.esc(pl.et[aqui + 1].add.nome)}) com ${F.brl(pl.et[aqui + 1].capital)}: faltam ${F.brl(pl.et[aqui + 1].capital - cap)}, ${meses((pl.et[aqui + 1].capital - cap) / pl.et[aqui].real)} no ritmo histórico.` : ' É a última etapa com os prontos de hoje.'}`}</div>
+        <div id="dcPlano"></div>
+        ${pl.fora.length ? `<div class="sub" style="margin-top:6px">Não cabem nos 5 contratos junto com a carteira: ${pl.fora.map(x => `${F.esc(x.nome)} (${x.ct} ctt)`).join(', ')}.</div>` : ''}`}
+        ${fila.length ? `<h3 style="margin-top:12px">Fila: os próximos a ficar confiáveis</h3><div class="sub">${fila.map(x => `<span class="selo warn" title="${F.esc(x.crit.filter(k => !k.ok).map(k => k.t + ': ' + k.x).join('\n'))}"><i>…</i>${F.esc(x.nome)} · falta: ${F.esc(x.motivo)}</span>`).join(' ')}</div>` : ''}
+      </div>
       <div class="grid2">
         <div class="card"><div class="cab"><h2>Retorno × risco</h2><span class="sub">cada ponto é um robô com ≥ 20 pregões · melhor = em cima e à esquerda</span></div>
           <div class="legenda">${Object.values(VER).filter(v => v !== VER.teste).map(v => `<span><i style="background:${v.cor}"></i>${v.t}</span>`).join('')}</div><div id="dcDisp"></div></div>
-        <div class="card"><div class="cab"><h2>Curva dos prontos somados</h2><span class="sub">${cart ? cart.n + ' robôs · ' + cart.dc.length + ' pregões · acumulado sem slippage' : ''}</span></div><div id="dcCurva"></div></div>
+        <div class="card"><div class="cab"><h2>Curva da carteira ${aqui >= 0 ? 'da sua etapa' : 'da 1ª etapa'}</h2><span class="sub" id="dcCurvaSub"></span></div><div id="dcCurva"></div></div>
       </div>
       <div class="card"><div class="cab"><h2>Ranking para a conta real</h2><button class="btn" id="dcCsv">Exportar CSV</button></div><div id="dcTab"></div>
         <details style="margin-top:10px"><summary class="sub" style="cursor:pointer">Como ler</summary><div class="kv" style="margin-top:8px;grid-template-columns:180px 1fr">
@@ -607,6 +635,21 @@
         </div></details></div>
       <div class="card"><div class="cab"><h2>Já na conta real</h2><span class="sub">real × o mesmo robô no simulador, nos mesmos pregões</span></div><div id="dcReal"></div></div>`;
     $('dcPct').onchange = e => { c.pct = +e.target.value; P.salvar(); R.decisao(host); };
+    $('dcCap').onchange = e => { c.cap = +e.target.value > 0 ? +e.target.value : ''; P.salvar(); R.decisao(host); };
+    if (pl.et.length) {
+      const erows = pl.et.map((e, i) => ({ i, e, et: i + 1, add: e.add.nome, n: e.xs.length, ct: e.ct, real: e.real, dd: e.dd, p95: e.p95, rb: e.rb, capital: e.capital, ret: 100 * 21 * e.real / e.capital, dias: i ? e.dias : 0, comum: e.comum }));
+      P.tabela($('dcPlano'), 'decPlano', [
+        { k: 'et', t: 'Etapa', f: (v, z) => `${v}${z.i === aqui ? ' <span class="selo good"><i>●</i>você está aqui</span>' : ''}` },
+        { k: 'add', t: 'Entra', l: 1, html: z => P.linkRobo(z.e.add.r) + (z.e.add.naReal ? ' <span class="selo info"><i>●</i>já na real</span>' : '') },
+        { k: 'n', t: 'Robôs', f: (v, z) => `<span title="${F.esc(z.e.xs.map(x => x.nome).join(' + '))}">${v}</span>` },
+        { k: 'ct', t: 'Ctt', f: F.n0, title: 'contratos somados (máx. de cada robô numa operação); conta real: 5' },
+        { k: 'real', t: 'R$/dia', f: v => F.brl(v), cor: 1, title: 'soma dos R$/dia com slippage dos robôs da etapa' },
+        { k: 'rb', t: 'Rebaixamento', f: (v, z) => `<span title="histórico ${F.brl(-z.dd)} · projetado 60 pregões ${isFinite(z.p95) ? F.brl(-z.p95) : '–'} · ${z.comum} pregões com todos rodando${z.comum < 10 ? ' (pouco: usei a soma dos rebaixamentos)' : ''}">${F.brl(-v)}</span>`, cls: () => 'neg', title: 'maior(histórico, projetado) da carteira junta: robôs que se compensam pedem menos' },
+        { k: 'capital', t: 'Capital da etapa', f: (v, z) => `<b>${F.brl(v)}</b>`, title: `rebaixamento ÷ ${c.pct}%` },
+        { k: 'ret', t: 'Retorno ao mês', f: v => F.pct(v, 1) },
+        { k: 'dias', t: 'Chega lá em', f: (v, z) => !z.i ? '<span class="sub">início</span>' : `${meses(v)} <span class="sub">· devagar: ${meses(2 * v)}</span>`, title: 'tempo para o lucro da etapa anterior cobrir o capital que falta. "Devagar" = rendendo metade do histórico' }],
+        erows, { sort: { k: 'et', d: 1 }, depois: P.ligarNomes, rowAttr: z => z.i === aqui ? 'style="background:var(--hover)"' : '' });
+    }
     if (!rows.length) { $('dcTab').innerHTML = '<div class="vazio">Nenhum robô do simulador no filtro.</div>'; }
     else {
       const tipR = x => `<b>${F.esc(x.nome)}</b> · ${VER[x.ver].t}<div class="linha"><span>R$/dia (com slippage)</span><span>${F.brl(x.real)}</span></div><div class="linha"><span>Rebaixamento máx</span><span>${F.brl(-x.dd)}</span></div><div class="linha"><span>Capital sugerido</span><span>${F.brl(x.capital)}</span></div><div class="linha"><span>Pregões</span><span>${x.n}</span></div>`;
@@ -632,7 +675,10 @@
         { k: 'mPos', t: 'Ganho médio' }, { k: 'mNeg', t: 'Perda média' }, { k: 'worst', t: 'Pior dia' }, { k: 'dd', t: 'Rebaixamento máx' }, { k: 'p95', t: 'Rebaixamento projetado 60 pregões' }, { k: 'rb', t: 'Rebaixamento de referência' }, { k: 'recupT', t: 'Recuperação (pregões)' }, { k: 'perdaMes', t: 'Mês ruim 5%' }, { k: 'ct', t: 'Ctt máx' }, { k: 'capital', t: 'Capital sugerido' }, { k: 'retMes', t: 'Retorno % mês' }],
         rows.map(x => Object.assign({}, x, { verT: VER[x.ver].t, recupT: x.recup == null ? 'não voltou' : x.recup })));
     }
-    if (cart) { const lab = cart.dc.map(d => P.D.dias[d]); G.line($('dcCurva'), { labels: lab, series: [{ name: 'Prontos somados', color: 'var(--s1)', vals: P.acum(cart.v) }, { name: 'Rebaixamento', color: 'var(--neg)', vals: P.submerso(cart.v), fill: true, w: 1 }], h: 260, fmtX: F.dataBr }); }
+    const eC = pl.et[Math.max(0, aqui)];
+    if (eC) { const rs = eC.rs, dc = C.dias.filter(d => rs.some(r => !isNaN(P.RES[r].f[d]))), v = Ind.serieSoma(rs, dc), lab = dc.map(d => P.D.dias[d]);
+      $('dcCurvaSub').textContent = `${eC.xs.map(x => x.nome).join(' + ')} · ${dc.length} pregões · sem slippage`;
+      G.line($('dcCurva'), { labels: lab, series: [{ name: 'Acumulado', color: 'var(--s1)', vals: P.acum(v) }, { name: 'Rebaixamento', color: 'var(--neg)', vals: P.submerso(v), fill: true, w: 1 }], h: 260, fmtX: F.dataBr }); }
     else $('dcCurva').innerHTML = '<div class="vazio">Nenhum robô pronto no filtro.</div>';
     // real × simulador
     const rr = reais.map(ro => { const r = ro.i, dr = C.dias.filter(d => !isNaN(P.RES[r].f[d])); if (!dr.length) return null;
