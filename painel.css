@@ -72,6 +72,14 @@ h3 { font-size: 13px; margin: 0 0 6px; font-weight: 650; color: var(--text-secon
 .abas button.on { color: var(--text-primary); border-bottom-color: var(--s1); font-weight: 600; }
 .aba { display: none; }
 .aba.on { display: block; }
+/* 24/11: painel enxuto - filtros avançados e abas extras só aparecem no "Mais" (a aba aberta sempre aparece) */
+.filtros:not(.ver) .frow.avanc { display: none; }
+.abas:not(.ver) button.extra:not(.on) { display: none; }
+.abas button.mais { margin-left: auto; color: var(--muted); font-size: 12px; }
+details.mais-det { margin-bottom: 14px; }
+details.mais-det > summary { cursor: pointer; color: var(--text-secondary); font-size: 13px; padding: 8px 12px; border: 1px dashed var(--border); border-radius: 10px; margin-bottom: 14px; }
+details.mais-det[open] > summary { color: var(--text-primary); }
+.ctrl input[type=number] { font: inherit; font-size: 12px; color: var(--text-primary); background: var(--surface-1); border: 1px solid var(--border); border-radius: 6px; padding: 2px 6px; height: 24px; }
 .rodape { margin-top: 24px; color: var(--muted); font-size: 11px; }
 
 /* cartões */

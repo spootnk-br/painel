@@ -15,8 +15,9 @@
 
   /* ---------------- estado / filtros ---------------- */
   const PADRAO = { preset: 'tudo', de: D.dias[0], ate: D.dias[ND - 1], semana: [1, 2, 3, 4, 5], regime: '', ampMin: '', ampMax: '', status: 'ativo', tipo: '', conta: null, familia: null, robos: null, estrategia: null, grafico: null,
-    busca: '', minDias: '', minDia: '', lado: '', horaDe: '', horaAte: '', durMin: '', durMax: '', resOp: '', antes: '', aba: 'geral', robo: null, comp: [], dia: null, sort: {}, calorClamp: 500, grupo: 'familia' };
+    busca: '', minDias: '', minDia: '', lado: '', horaDe: '', horaAte: '', durMin: '', durMax: '', resOp: '', antes: '', aba: 'decisao', robo: null, comp: [], dia: null, sort: {}, calorClamp: 500, grupo: 'familia', maisF: false, maisA: false };
   let S; try { S = Object.assign({}, PADRAO, JSON.parse(localStorage.getItem('painelRobos.v1') || '{}')); } catch (e) { S = Object.assign({}, PADRAO); }
+  if (!S.v2) { S.v2 = 1; S.aba = 'decisao'; }   // 24/11: painel enxuto abre na aba Decisão
   const salvar = () => { try { localStorage.setItem('painelRobos.v1', JSON.stringify(S)); } catch (e) { } };
 
   function aplicarPreset() {
@@ -102,11 +103,13 @@
     liga('fRegime', 'regime'); liga('fAmpMin', 'ampMin'); liga('fAmpMax', 'ampMax'); liga('fStatus', 'status'); liga('fTipo', 'tipo'); liga('fBusca', 'busca', 'input');
     liga('fMinDias', 'minDias'); liga('fMinDia', 'minDia'); liga('fLado', 'lado'); liga('fHoraDe', 'horaDe'); liga('fHoraAte', 'horaAte');
     liga('fDurMin', 'durMin'); liga('fDurMax', 'durMax'); liga('fResOp', 'resOp'); liga('fAntes', 'antes');
-    $('btnLimpar').onclick = () => { const keep = { aba: S.aba, robo: S.robo, comp: S.comp, sort: S.sort, calorClamp: S.calorClamp, grupo: S.grupo }; S = Object.assign({}, PADRAO, keep); aplicarPreset(); syncCampos(); mudou(); };
+    $('btnLimpar').onclick = () => { const keep = { aba: S.aba, robo: S.robo, comp: S.comp, sort: S.sort, calorClamp: S.calorClamp, grupo: S.grupo, maisF: S.maisF, maisA: S.maisA, dec: S.dec, v2: S.v2, conjunto: S.conjunto }; S = Object.assign({}, PADRAO, keep); aplicarPreset(); syncCampos(); mudou(); };
+    $('btnMaisF').onclick = () => { S.maisF = !S.maisF; salvar(); syncCampos(); };
+    $('btnMaisA').onclick = () => { S.maisA = !S.maisA; salvar(); syncCampos(); };
     document.addEventListener('click', () => document.querySelectorAll('.ms.open').forEach(m => m.classList.remove('open')));
     $('btnTema').onclick = () => { const r = document.documentElement; const atual = r.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'); r.dataset.theme = atual === 'dark' ? 'light' : 'dark'; try { localStorage.setItem('painelRobos.tema', r.dataset.theme); } catch (e) { } };
     try { const t = localStorage.getItem('painelRobos.tema'); if (t) document.documentElement.dataset.theme = t; } catch (e) { }
-    document.querySelectorAll('#abas button').forEach(b => b.onclick = () => abrirAba(b.dataset.aba));
+    document.querySelectorAll('#abas button[data-aba]').forEach(b => b.onclick = () => abrirAba(b.dataset.aba));
     syncCampos();
   }
   function syncCampos() {
@@ -116,13 +119,23 @@
     set('fDurMin', S.durMin); set('fDurMax', S.durMax); set('fResOp', S.resOp); set('fAntes', S.antes);
     $('fSemana').querySelectorAll('.chip').forEach(c => c.classList.toggle('on', S.semana.includes(+c.dataset.d)));
     ['fConta', 'fFamilia', 'fRobo', 'fEstrategia', 'fGrafico'].forEach(id => $(id)._sync && $(id)._sync());
+    syncMais();
+  }
+  // filtros avançados e abas extras escondidos por padrão; o botão conta quantos filtros avançados estão ligados
+  function syncMais() {
+    const nAv = [S.semana.length < 5, S.regime, S.ampMin !== '', S.ampMax !== '', S.conta, S.estrategia, S.grafico, S.minDias !== '', S.minDia !== '', S.lado, S.horaDe, S.horaAte, S.durMin !== '', S.durMax !== '', S.resOp, S.antes].filter(Boolean).length;
+    $('filtros').classList.toggle('ver', !!S.maisF);
+    $('btnMaisF').textContent = (S.maisF ? 'Menos filtros' : 'Mais filtros') + (nAv ? ` (${nAv} ligado${nAv > 1 ? 's' : ''})` : '');
+    $('btnMaisF').classList.toggle('on', nAv > 0);
+    $('abas').classList.toggle('ver', !!S.maisA);
+    $('btnMaisA').textContent = S.maisA ? 'Menos ◂' : 'Mais análises ▸';
   }
 
   /* ---------------- abas ---------------- */
   const sujo = {};
   function abrirAba(a) { S.aba = a; salvar(); document.querySelectorAll('#abas button').forEach(b => b.classList.toggle('on', b.dataset.aba === a)); document.querySelectorAll('.aba').forEach(s => s.classList.toggle('on', s.id === 'aba-' + a)); render(true); }
   let timer = null;
-  function mudou() { salvar(); ['fConta', 'fFamilia', 'fRobo', 'fEstrategia', 'fGrafico'].forEach(id => $(id)._sync && $(id)._sync()); clearTimeout(timer); timer = setTimeout(() => { calcular(); Object.keys(R).forEach(k => sujo[k] = true); render(true); }, 120); }
+  function mudou() { salvar(); syncMais(); ['fConta', 'fFamilia', 'fRobo', 'fEstrategia', 'fGrafico'].forEach(id => $(id)._sync && $(id)._sync()); clearTimeout(timer); timer = setTimeout(() => { calcular(); Object.keys(R).forEach(k => sujo[k] = true); render(true); }, 120); }
   function render(force) { const a = S.aba; if (!R[a]) return; if (force || sujo[a]) { sujo[a] = false; const host = $('aba-' + a); try { R[a](host); } catch (e) { host.innerHTML = `<div class="vazio">Erro ao desenhar: ${F.esc(e.message)}</div>`; console.error(e); } } }
   addEventListener('resize', () => { clearTimeout(window._rz); window._rz = setTimeout(() => render(true), 200); });
 
@@ -171,17 +184,12 @@
       ${tile('Resultado no período', F.brl(tot), `${CTX.robos.length} robôs somados`, tot < 0 ? 'neg' : '')}
       ${tile('Por pregão (carteira)', F.brl(tot / v.length), `${v.length} pregões`, tot < 0 ? 'neg' : '')}
       ${tile('Por robô por dia', F.brl(tot / Math.max(1, diasRobo)), `${diasRobo} dias-robô · alvo R$ 100`)}
-      ${tile('Pregões positivos', F.pct(100 * v.filter(x => x > 0).length / v.length), `${v.filter(x => x > 0).length} de ${v.length}`)}
-      ${tile('Melhor pregão', F.brl(best), F.dataBrA(lab[iB]))}
-      ${tile('Pior pregão', F.brl(worst), F.dataBrA(lab[iW]), 'neg')}
+      ${tile('Pregões positivos', F.pct(100 * v.filter(x => x > 0).length / v.length), `${v.filter(x => x > 0).length} de ${v.length} · melhor ${F.n0(best)} · pior ${F.n0(worst)}`)}
       ${tile('Queda máxima', F.brl(dd), 'do pico ao fundo, carteira', dd < 0 ? 'neg' : '')}
       ${tile('Robôs ≥ R$ 100/dia', robos100 + ' de ' + CTX.robos.length, 'média no período filtrado')}
     </div>
-    <div class="card"><div class="cab"><h2>Resultado acumulado da carteira</h2><span class="sub">soma dos robôs filtrados · clique para abrir o dia</span></div><div id="gAcum"></div></div>
-    <div class="grid2">
-      <div class="card"><div class="cab"><h2>Resultado por pregão</h2><span class="sub">clique na barra para abrir o dia</span></div><div id="gDia"></div></div>
-      <div class="card"><div class="cab"><h2>Queda a partir do pico</h2><span class="sub">quanto a carteira estava abaixo do melhor acumulado</span></div><div id="gSub"></div></div>
-    </div>
+    <div class="card"><div class="cab"><h2>Resultado acumulado da carteira</h2><span class="sub">soma dos robôs filtrados · vermelho = queda a partir do pico · clique para abrir o dia</span></div><div id="gAcum"></div></div>
+    <div class="card"><div class="cab"><h2>Resultado por pregão</h2><span class="sub">clique na barra para abrir o dia</span></div><div id="gDia"></div></div>
     <div class="grid2">
       <div class="card"><h2>Melhores robôs no período</h2><div id="tTop"></div></div>
       <div class="card"><h2>Piores robôs no período</h2><div id="tBot"></div></div>
@@ -192,14 +200,13 @@
         + (mx ? `<div class="linha"><span>Melhor: ${F.esc(ROB[mx.r].n)}</span><span>${F.sbrl(mx.v)}</span></div><div class="linha"><span>Pior: ${F.esc(ROB[mn.r].n)}</span><span>${F.sbrl(mn.v)}</span></div>` : '')
         + `<div class="linha"><span>Amplitude / A10</span><span>${F.n0(DIA[d].amp)} / ${F.n0(DIA[d].a10)}</span></div>`; };
     const abrirDia = i => { S.dia = CTX.dias[i]; abrirAba('dia'); };
-    G.line($('gAcum'), { labels: lab, series: [{ name: 'Acumulado', color: 'var(--s1)', vals: ac }], h: 240, fmtX: F.dataBr, tip: tipDia, onClick: abrirDia });
-    G.bars($('gDia'), { labels: lab, vals: cd, h: 200, fmtX: F.dataBr, tip: tipDia, onClick: abrirDia });
-    G.line($('gSub'), { labels: lab, series: [{ name: 'Queda', color: 'var(--neg)', vals: sub, fill: true }], h: 200, fmtX: F.dataBr });
+    G.line($('gAcum'), { labels: lab, series: [{ name: 'Acumulado', color: 'var(--s1)', vals: ac }, { name: 'Queda', color: 'var(--neg)', vals: sub, fill: true, w: 1 }], h: 260, fmtX: F.dataBr, tip: tipDia, onClick: abrirDia });
+    G.bars($('gDia'), { labels: lab, vals: cd, h: 180, fmtX: F.dataBr, tip: tipDia, onClick: abrirDia });
     const cols = [{ k: 'nome', t: 'Robô', l: 1, nome: 1, html: x => linkRobo(x.r), s: x => ROB[x.r].n }, { k: 'n', t: 'Pregões', f: F.n0 }, { k: 's', t: 'Total', f: v => F.brl(v), cor: 1 }, { k: 'm', t: 'R$/dia', f: v => F.brl(v), cor: 1 }, { k: 'sp', t: 'Curva', html: x => G.spark(valsRobo(x.r)) }];
     porRobo.forEach(x => x.nome = ROB[x.r].n);
     const ord = porRobo.slice().sort((a, b) => b.s - a.s);
-    tabela($('tTop'), 'top', cols, ord.slice(0, 8), { sort: { k: 's', d: -1 }, depois: ligarNomes });
-    tabela($('tBot'), 'bot', cols, ord.slice(-8), { sort: { k: 's', d: 1 }, depois: ligarNomes });
+    tabela($('tTop'), 'top', cols, ord.slice(0, 5), { sort: { k: 's', d: -1 }, depois: ligarNomes });
+    tabela($('tBot'), 'bot', cols, ord.slice(-5), { sort: { k: 's', d: 1 }, depois: ligarNomes });
   };
 
   /* ---------------- MAPA DE CALOR ---------------- */
