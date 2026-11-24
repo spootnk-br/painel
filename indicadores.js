@@ -516,7 +516,9 @@
 /* ================= DECISÃO: o que levar para a conta real (24/11/2026) =================
    Um robô por linha (só simulador). Ganho, perda, queda máxima, recuperação, capital sugerido e veredito.
    R$/dia "real" = R$/dia − 1 tick (5 pts WIN) contra na entrada e na saída de cada contrato.
-   Capital = margem × contratos + folga × maior(queda máx histórica, queda P95 projetada em 60 pregões). */
+   24/11 (pedido do usuário: "margem com base no rebaixamento do robô", margem da corretora não importa):
+   rebaixamento de referência = maior(rebaixamento máx histórico, rebaixamento P95 projetado em 60 pregões);
+   capital = rebaixamento de referência ÷ % da conta que se aceita perder nele (padrão 30%). */
 (function () {
   const P = window.P, F = G.F, R = P.R, $ = P.$;
   const base = n => n.replace(/\s*·\s*REAL$/, '');
@@ -527,16 +529,15 @@
     const out = new Float64Array(it); for (let k = 0; k < it; k++) { let E = 0, pk = 0, dd = 0; for (let i = 0; i < H; i++) { E += v[Math.floor(rnd() * v.length)]; if (E > pk) pk = E; if (pk - E > dd) dd = pk - E; } out[k] = dd; }
     return M.pctl(Array.from(out), 0.95);
   }
-  function cfg() { const S = P.S; S.dec = Object.assign({ margem: 155, folga: 1.5 }, S.dec || {}); return S.dec; }
+  function cfg() { const S = P.S; S.dec = Object.assign({ pct: 30 }, S.dec || {}); delete S.dec.margem; delete S.dec.folga; return S.dec; }
   function avaliar(r, dias, ops, c) {
     const x = M.linha(r, dias, ops), d = x.d, o = x.o, rob = P.ROB[r];
     if (!d.n) return null;
     const slip = o.n ? (o.liq - o.saldoTick) / d.n : 0, real = d.porDia - slip;
     const u20 = M.mean(d.v.slice(-20)), ct = Math.max(1, o.n ? o.maxCt : (d.mp || 1));
-    // colchão = maior entre: queda máx histórica, queda P95 projetada (≥ 10 pregões) e 3 dias seguidos batendo a perda diária (Aba Risco; sem ela, o pior dia)
-    const p95 = d.n >= 10 ? quedaP95(d.v) : NaN, perdaDia = rob.pd > 0 ? rob.pd : Math.abs(Math.min(0, d.worst)), piso = 3 * perdaDia;
-    const colchao = Math.max(d.dd, isFinite(p95) ? p95 : 0, piso), base3 = colchao === piso && piso > Math.max(d.dd, isFinite(p95) ? p95 : 0);
-    const capital = c.margem * ct + c.folga * colchao, retMes = capital > 0 && d.n >= 20 ? 100 * 21 * real / capital : NaN;
+    // rebaixamento de referência = maior(histórico, P95 projetado em 60 pregões; projeção só com ≥ 10 pregões)
+    const p95 = d.n >= 10 ? quedaP95(d.v) : NaN, rb = Math.max(d.dd, isFinite(p95) ? p95 : 0), rbProj = isFinite(p95) && p95 > d.dd;
+    const capital = rb > 0 ? rb / (c.pct / 100) : NaN, retMes = capital > 0 && d.n >= 20 ? 100 * 21 * real / capital : NaN;
     const diasGanho = real > 0 ? d.dd / real : Infinity;
     const recup = d.dd <= 0 ? 0 : d.diasRecup != null ? d.diasRecup : null;   // pregões do fundo até voltar ao pico (null = ainda não voltou)
     const crit = [
@@ -545,19 +546,19 @@
       { t: 'Consistência', ok: d.h1 > 0 && d.h2 > 0, x: `metades ${F.n0(d.h1)} e ${F.n0(d.h2)} por dia (as 2 > 0)` },
       { t: 'Recência', ok: u20 > 0, x: `últimos 20 pregões ${F.brl(u20)}/dia (> 0)` },
       { t: 'Sem sorte', ok: d.semMelhor > 0 && !(d.pctMelhor > 50), x: `sem o melhor dia sobra ${F.brl(d.semMelhor)}` },
-      { t: 'Queda', ok: diasGanho <= 12, x: `queda máx = ${isFinite(diasGanho) ? F.n1(diasGanho) : '∞'} dias de ganho (≤ 12)` },
+      { t: 'Rebaixamento', ok: diasGanho <= 12, x: `rebaixamento máx = ${isFinite(diasGanho) ? F.n1(diasGanho) : '∞'} dias de ganho (≤ 12)` },
       { t: 'Estatística', ok: d.tdia >= 1.5, x: `t-dia ${F.n2(d.tdia)} (≥ 1,5 = não é ruído)` },
       { t: 'Contratos', ok: ct <= 5, x: `até ${ct} contrato(s) numa operação (conta real: 5)` }];
     const falhas = crit.filter(k => !k.ok);
     // regra do usuário: < 20 pregões não se julga (nem para levar, nem para descartar)
     const ver = d.n < 20 ? 'teste' : real <= 0 || diasGanho > 25 || (u20 < 0 && d.h2 < 0) ? 'nao' : falhas.length ? 'observar' : 'pronto';
-    const motivo = ver === 'pronto' ? 'passa nos 8 critérios' : ver === 'teste' ? `${d.n} de 20 pregões · até aqui ${real > 0 ? 'positivo' : 'negativo'}` : real <= 0 ? 'não ganha com slippage' : diasGanho > 25 ? 'queda come mais de 25 dias de ganho' : ver === 'nao' ? 'piorando: 2ª metade e últimos 20 negativos' : falhas.map(k => k.t.toLowerCase()).join(', ');
+    const motivo = ver === 'pronto' ? 'passa nos 8 critérios' : ver === 'teste' ? `${d.n} de 20 pregões · até aqui ${real > 0 ? 'positivo' : 'negativo'}` : real <= 0 ? 'não ganha com slippage' : diasGanho > 25 ? 'rebaixamento come mais de 25 dias de ganho' : ver === 'nao' ? 'piorando: 2ª metade e últimos 20 negativos' : falhas.map(k => k.t.toLowerCase()).join(', ');
     return { r, nome: rob.n, fam: rob.f, x, d, o, n: d.n, bruto: d.porDia, slip, real, u20, pctPos: d.pctPos, mPos: d.mPos, mNeg: d.mNeg, best: d.best, worst: d.worst, dd: d.dd, p95,
-      dataFundo: d.iFundo >= 0 ? P.D.dias[d.idx[d.iFundo]] : null, recup, submAtual: d.submersoAtual, submMax: d.submersoMax, fatorRec: d.recup, diasGanho, ct, capital, colchao, base3, perdaDia, retMes, perdaMes: d.perda20, crit, ver, motivo };
+      dataFundo: d.iFundo >= 0 ? P.D.dias[d.idx[d.iFundo]] : null, recup, submAtual: d.submersoAtual, submMax: d.submersoMax, fatorRec: d.recup, diasGanho, ct, capital, rb, rbProj, retMes, perdaMes: d.perda20, crit, ver, motivo };
   }
   let cache = { ctx: null, k: '', rows: null };
   function linhasDec() {
-    const C = P.CTX, c = cfg(), k = c.margem + '|' + c.folga; if (cache.ctx === C && cache.k === k) return cache.rows;
+    const C = P.CTX, c = cfg(), k = String(c.pct); if (cache.ctx === C && cache.k === k) return cache.rows;
     const by = {}; for (const o of C.opsF) (by[o.r] = by[o.r] || []).push(o);
     const rows = C.robos.filter(r => P.ROB[r].tc !== 'Real').map(r => avaliar(r, C.dias, by[r] || [], c)).filter(Boolean);
     const naReal = new Set(P.ROB.filter(r => r.tc === 'Real').map(r => base(r.n)));
@@ -566,7 +567,7 @@
   }
   window.Dec = { linhasDec, VER };
   const verHtml = x => { const v = VER[x.ver]; return `<span class="selo ${v.c}" title="${F.esc(x.crit.map(k => (k.ok ? '✓ ' : '✕ ') + k.t + ': ' + k.x).join('\n'))}"><i>${v.i}</i>${v.t}</span><div class="sub" style="font-size:11px;max-width:190px;white-space:normal">${F.esc(x.motivo)}</div>`; };
-  const recHtml = x => x.dd <= 0 ? '<span class="sub">sem queda</span>' : x.recup != null ? `${x.recup} pregões` : `<span class="neg">não voltou</span> <span class="sub">(há ${x.submAtual})</span>`;
+  const recHtml = x => x.dd <= 0 ? '<span class="sub">sem rebaixamento</span>' : x.recup != null ? `${x.recup} pregões` : `<span class="neg">não voltou</span> <span class="sub">(há ${x.submAtual})</span>`;
 
   R.decisao = host => {
     const C = P.CTX, c = cfg(), rows = linhasDec();
@@ -577,17 +578,16 @@
     if (pr.length) { const rs = pr.map(x => x.r), dc = C.dias.filter(d => rs.some(r => !isNaN(P.RES[r].f[d])));   // só pregões em que algum pronto já rodava
       const v = Ind.serieSoma(rs, dc), dd = Ind.ddDe(v), slip = M.sum(pr.map(x => x.slip * x.n)) / Math.max(1, dc.length);
       const p95 = dc.length >= 10 ? quedaP95(v) : NaN, ct = M.sum(pr.map(x => x.ct)), real = M.sum(v) / Math.max(1, dc.length) - slip;
-      cart = { n: pr.length, real, dd, p95, ct, capital: c.margem * ct + c.folga * Math.max(dd, isFinite(p95) ? p95 : 0), v, dc }; }
+      cart = { n: pr.length, real, dd, p95, ct, capital: Math.max(dd, isFinite(p95) ? p95 : 0) / (c.pct / 100), v, dc }; }
     host.innerHTML = `
       <div class="card"><div class="cab"><div><h2>O que levar para a conta real</h2><div class="sub">Robôs do simulador no período filtrado. Resultados já descontam slippage de 1 tick (5 pts) na entrada e na saída. Passe o mouse no veredito para ver os 8 critérios.</div></div>
-        <div class="ctrl">Margem por contrato R$ <input type="number" id="dcMargem" value="${c.margem}" step="5" min="0" style="width:70px">
-          Folga sobre a queda <select id="dcFolga">${[1, 1.5, 2, 3].map(f => `<option value="${f}" ${f === c.folga ? 'selected' : ''}>${String(f).replace('.', ',')}×</option>`).join('')}</select></div></div>
+        <div class="ctrl" title="capital = rebaixamento de referência ÷ este %. Ex.: rebaixamento R$ 1.500 com 30% → capital R$ 5.000">No pior rebaixamento aceito perder <select id="dcPct">${[15, 20, 25, 30, 40, 50].map(f => `<option value="${f}" ${f === c.pct ? 'selected' : ''}>${f}% da conta</option>`).join('')}</select></div></div>
       <div class="tiles" style="margin:10px 0 0">
         ${P.tile('Prontos para a real', pr.length, 'passam nos 8 critérios')}
         ${P.tile('Observar', ob.length, 'positivos, falta algum critério')}
         ${P.tile('Em teste', te.length, 'menos de 20 pregões: ainda não dá para julgar')}
-        ${P.tile('Não levar', na.length, 'perdem, piorando ou queda grande', na.length ? 'neg' : '')}
-        ${cart ? P.tile('Carteira dos prontos', F.brl(cart.real) + '/dia', `queda máx ${F.brl(-cart.dd)} · P95 ${F.brl(-cart.p95)}`) + P.tile('Capital p/ os prontos', F.brl(cart.capital), `${cart.ct} contratos somados${cart.ct > 5 ? ' (conta real: 5)' : ''} · ${F.pct(100 * 21 * cart.real / cart.capital, 1)} ao mês`, cart.ct > 5 ? 'neg' : '') : P.tile('Carteira dos prontos', '–', 'nenhum robô pronto no filtro')}
+        ${P.tile('Não levar', na.length, 'perdem, piorando ou rebaixamento grande', na.length ? 'neg' : '')}
+        ${cart ? P.tile('Carteira dos prontos', F.brl(cart.real) + '/dia', `rebaix. máx ${F.brl(-cart.dd)} · projetado ${F.brl(-cart.p95)}`) + P.tile('Capital p/ os prontos', F.brl(cart.capital), `${F.pct(100 * 21 * cart.real / cart.capital, 1)} ao mês · ${cart.ct} contratos somados${cart.ct > 5 ? ' (conta real: 5)' : ''}`, cart.ct > 5 ? 'neg' : '') : P.tile('Carteira dos prontos', '–', 'nenhum robô pronto no filtro')}
       </div></div>
       <div class="grid2">
         <div class="card"><div class="cab"><h2>Retorno × risco</h2><span class="sub">cada ponto é um robô com ≥ 20 pregões · melhor = em cima e à esquerda</span></div>
@@ -598,20 +598,19 @@
         <details style="margin-top:10px"><summary class="sub" style="cursor:pointer">Como ler</summary><div class="kv" style="margin-top:8px;grid-template-columns:180px 1fr">
           <div>R$/dia</div><div style="font-weight:400;text-align:left">média por pregão já descontado 1 tick contra em cada entrada e saída (o simulador executa melhor que a real). Alvo: R$ 100.</div>
           <div>Ganho médio / perda média</div><div style="font-weight:400;text-align:left">média dos dias positivos / dos dias negativos.</div>
-          <div>Queda máxima</div><div style="font-weight:400;text-align:left">maior tombo do acumulado, do pico ao fundo. No tooltip: a queda que pode aparecer em 60 pregões (P95 de 1.000 sorteios dos dias do robô).</div>
-          <div>Recuperação</div><div style="font-weight:400;text-align:left">quantos pregões levou, do fundo da queda máxima, para voltar ao pico. "Não voltou" = ainda abaixo do pico.</div>
-          <div>Capital sugerido</div><div style="font-weight:400;text-align:left">margem × contratos máximos + folga × maior(queda máxima, queda P95 em 60 pregões, 3 dias seguidos batendo a perda diária da Aba Risco). É o dinheiro para aguentar a pior fase sem ser obrigado a parar. Margem padrão R$ 155: troque pela da CM.</div>
+          <div>Rebaixamento máx</div><div style="font-weight:400;text-align:left">maior tombo do acumulado no histórico, do pico ao fundo. No tooltip: a data do fundo e quantos dias de ganho médio ele come.</div>
+          <div>Recuperação</div><div style="font-weight:400;text-align:left">quantos pregões levou, do fundo do rebaixamento máximo, para voltar ao pico. "Não voltou" = ainda abaixo do pico.</div>
+          <div>Rebaixamento projetado</div><div style="font-weight:400;text-align:left">o rebaixamento que pode aparecer nos próximos 60 pregões: P95 de 1.000 sorteios dos dias do próprio robô (só com ≥ 10 pregões). Costuma ser maior que o histórico, porque o histórico é só um caminho.</div>
+          <div>Capital sugerido</div><div style="font-weight:400;text-align:left">maior(rebaixamento máx, rebaixamento projetado) ÷ % da conta que você aceita perder no pior rebaixamento (padrão 30%: o pior tombo leva 30% da conta e ainda sobra para o robô se recuperar). A margem da corretora não entra: é bem menor que o rebaixamento.</div>
           <div>Retorno ao mês</div><div style="font-weight:400;text-align:left">21 pregões × R$/dia ÷ capital sugerido. Compara robôs de tamanhos diferentes.</div>
-          <div>Mês ruim (5%)</div><div style="font-weight:400;text-align:left">em 1 de cada 20 meses o resultado de 20 pregões fica abaixo disso (20μ − 1,645σ√20). Negativo = mês no vermelho é possível.</div>
-          <div>Veredito</div><div style="font-weight:400;text-align:left">Pronto = ≥ 20 pregões, ≥ R$ 50/dia com slippage, as 2 metades e os últimos 20 positivos, positivo sem o melhor dia, queda ≤ 12 dias de ganho, t-dia ≥ 1,5 e ≤ 5 contratos. Em teste = menos de 20 pregões (não se julga). Não levar = perde com slippage, queda > 25 dias de ganho, ou 2ª metade e últimos 20 negativos.</div>
+          <div>Veredito</div><div style="font-weight:400;text-align:left">Pronto = ≥ 20 pregões, ≥ R$ 50/dia com slippage, as 2 metades e os últimos 20 positivos, positivo sem o melhor dia, rebaixamento ≤ 12 dias de ganho, t-dia ≥ 1,5 e ≤ 5 contratos. Em teste = menos de 20 pregões (não se julga). Não levar = perde com slippage, rebaixamento > 25 dias de ganho, ou 2ª metade e últimos 20 negativos.</div>
         </div></details></div>
       <div class="card"><div class="cab"><h2>Já na conta real</h2><span class="sub">real × o mesmo robô no simulador, nos mesmos pregões</span></div><div id="dcReal"></div></div>`;
-    $('dcMargem').onchange = e => { c.margem = Math.max(0, +e.target.value || 0); P.salvar(); R.decisao(host); };
-    $('dcFolga').onchange = e => { c.folga = +e.target.value; P.salvar(); R.decisao(host); };
+    $('dcPct').onchange = e => { c.pct = +e.target.value; P.salvar(); R.decisao(host); };
     if (!rows.length) { $('dcTab').innerHTML = '<div class="vazio">Nenhum robô do simulador no filtro.</div>'; }
     else {
-      const tipR = x => `<b>${F.esc(x.nome)}</b> · ${VER[x.ver].t}<div class="linha"><span>R$/dia (com slippage)</span><span>${F.brl(x.real)}</span></div><div class="linha"><span>Queda máxima</span><span>${F.brl(-x.dd)}</span></div><div class="linha"><span>Capital sugerido</span><span>${F.brl(x.capital)}</span></div><div class="linha"><span>Pregões</span><span>${x.n}</span></div>`;
-      G.scatter($('dcDisp'), { pts: rows.filter(x => x.ver !== 'teste').map(x => ({ x: x.dd, y: x.real, c: VER[x.ver].cor, tip: tipR(x) })), xRot: 'queda máxima (R$)', yRot: 'R$/dia com slippage', fmtX: F.n0, h: 260 });
+      const tipR = x => `<b>${F.esc(x.nome)}</b> · ${VER[x.ver].t}<div class="linha"><span>R$/dia (com slippage)</span><span>${F.brl(x.real)}</span></div><div class="linha"><span>Rebaixamento máx</span><span>${F.brl(-x.dd)}</span></div><div class="linha"><span>Capital sugerido</span><span>${F.brl(x.capital)}</span></div><div class="linha"><span>Pregões</span><span>${x.n}</span></div>`;
+      G.scatter($('dcDisp'), { pts: rows.filter(x => x.ver !== 'teste').map(x => ({ x: x.dd, y: x.real, c: VER[x.ver].cor, tip: tipR(x) })), xRot: 'rebaixamento máximo (R$)', yRot: 'R$/dia com slippage', fmtX: F.n0, h: 260 });
       const cols = [
         { k: 'nome', t: 'Robô', l: 1, nome: 1, fix: 1, html: x => P.linkRobo(x.r) + (x.naReal ? ' <span class="selo info" title="já roda na conta real"><i>●</i>na real</span>' : '') + `<div class="sub" style="font-size:11px">${F.esc(x.fam || '')}</div>`, s: x => x.nome },
         { k: 'ver', t: 'Veredito', l: 1, html: verHtml, s: x => VER[x.ver].o * 1e6 + (isFinite(x.retMes) ? 10 * x.retMes : -5e4 + x.real), title: 'passe o mouse no selo para ver os 8 critérios' },
@@ -622,18 +621,18 @@
         { k: 'mPos', t: 'Ganho médio', f: v => F.brl(v), title: 'média dos dias positivos' },
         { k: 'mNeg', t: 'Perda média', f: v => F.brl(v), cor: 1, title: 'média dos dias negativos' },
         { k: 'worst', t: 'Pior dia', f: v => F.brl(v), cor: 1 },
-        { k: 'dd', t: 'Queda máx', f: (v, x) => `<span title="${x.dataFundo ? 'fundo em ' + F.dataBrA(x.dataFundo) + ' · ' : ''}queda P95 projetada em 60 pregões: ${F.brl(-x.p95)} · = ${isFinite(x.diasGanho) ? F.n1(x.diasGanho) : '∞'} dias de ganho">${F.brl(-v)}</span>`, cls: v => v > 0 ? 'neg' : '', s: x => -x.dd },
-        { k: 'recup', t: 'Recuperação', html: recHtml, s: x => x.recup == null ? -1000 - x.submAtual : -x.recup, title: 'pregões do fundo da queda máxima até voltar ao pico. Fator total/queda e maior tempo abaixo do pico no tooltip' },
-        { k: 'perdaMes', t: 'Mês ruim (5%)', f: v => F.brl(v), cor: 1, title: '20 pregões no pior caso de 1 em 20: 20μ − 1,645σ√20' },
-        { k: 'capital', t: 'Capital sugerido', f: (v, x) => `<span title="margem ${F.brl(c.margem)} × ${x.ct} ctt + ${String(c.folga).replace('.', ',')} × ${F.brl(x.colchao)} (${x.base3 ? '3 dias seguidos de perda ' + F.brl(x.perdaDia) : 'maior entre queda máx e queda P95'})">${F.brl(v)}</span>`, s: x => -x.capital },
+        { k: 'dd', t: 'Rebaix. máx', f: (v, x) => `<span title="${x.dataFundo ? 'fundo em ' + F.dataBrA(x.dataFundo) + ' · ' : ''}= ${isFinite(x.diasGanho) ? F.n1(x.diasGanho) : '∞'} dias de ganho">${F.brl(-v)}</span>`, cls: v => v > 0 ? 'neg' : '', s: x => -x.dd, title: 'maior rebaixamento do acumulado, do pico ao fundo, no histórico' },
+        { k: 'p95', t: 'Rebaix. projetado', f: v => isFinite(v) ? F.brl(-v) : '<span class="sub">–</span>', cls: v => v > 0 ? 'neg' : '', s: x => isFinite(x.p95) ? -x.p95 : -1e9, title: 'rebaixamento que pode aparecer em 60 pregões: P95 de 1.000 sorteios dos dias do robô (≥ 10 pregões)' },
+        { k: 'recup', t: 'Recuperação', html: recHtml, s: x => x.recup == null ? -1000 - x.submAtual : -x.recup, title: 'pregões do fundo do rebaixamento máximo até voltar ao pico' },
+        { k: 'capital', t: 'Capital sugerido', f: (v, x) => isFinite(v) ? `<span title="${F.brl(x.rb)} (${x.rbProj ? 'rebaixamento projetado' : 'rebaixamento máx'}) ÷ ${c.pct}%">${F.brl(v)}</span>` : '–', s: x => isFinite(x.capital) ? -x.capital : -1e9, title: `maior(rebaixamento máx, projetado) ÷ ${c.pct}% (o quanto da conta você aceita perder no pior rebaixamento)` },
         { k: 'retMes', t: 'Retorno ao mês', f: v => isFinite(v) ? F.pct(v, 1) : '<span class="sub">amostra curta</span>', cor: 1, title: '21 × R$/dia ÷ capital sugerido (só com ≥ 20 pregões)' },
         { k: 'sp', t: 'Curva', html: x => G.spark(x.d.v), s: x => x.d.tot }];
       P.tabela($('dcTab'), 'dec', cols, rows, { sort: { k: 'ver', d: -1 }, depois: P.ligarNomes });
       $('dcCsv').onclick = () => P.csv('decisao_conta_real.csv', [{ k: 'nome', t: 'Robô' }, { k: 'fam', t: 'Família' }, { k: 'verT', t: 'Veredito' }, { k: 'motivo', t: 'Motivo' }, { k: 'n', t: 'Pregões' }, { k: 'real', t: 'R$/dia c/ slippage' }, { k: 'bruto', t: 'R$/dia sem slippage' }, { k: 'u20', t: 'Últ. 20' }, { k: 'pctPos', t: '% dias +' },
-        { k: 'mPos', t: 'Ganho médio' }, { k: 'mNeg', t: 'Perda média' }, { k: 'worst', t: 'Pior dia' }, { k: 'dd', t: 'Queda máx' }, { k: 'p95', t: 'Queda P95 60d' }, { k: 'recupT', t: 'Recuperação (pregões)' }, { k: 'perdaMes', t: 'Mês ruim 5%' }, { k: 'ct', t: 'Ctt máx' }, { k: 'capital', t: 'Capital sugerido' }, { k: 'retMes', t: 'Retorno % mês' }],
+        { k: 'mPos', t: 'Ganho médio' }, { k: 'mNeg', t: 'Perda média' }, { k: 'worst', t: 'Pior dia' }, { k: 'dd', t: 'Rebaixamento máx' }, { k: 'p95', t: 'Rebaixamento projetado 60 pregões' }, { k: 'rb', t: 'Rebaixamento de referência' }, { k: 'recupT', t: 'Recuperação (pregões)' }, { k: 'perdaMes', t: 'Mês ruim 5%' }, { k: 'ct', t: 'Ctt máx' }, { k: 'capital', t: 'Capital sugerido' }, { k: 'retMes', t: 'Retorno % mês' }],
         rows.map(x => Object.assign({}, x, { verT: VER[x.ver].t, recupT: x.recup == null ? 'não voltou' : x.recup })));
     }
-    if (cart) { const lab = cart.dc.map(d => P.D.dias[d]); G.line($('dcCurva'), { labels: lab, series: [{ name: 'Prontos somados', color: 'var(--s1)', vals: P.acum(cart.v) }, { name: 'Queda', color: 'var(--neg)', vals: P.submerso(cart.v), fill: true, w: 1 }], h: 260, fmtX: F.dataBr }); }
+    if (cart) { const lab = cart.dc.map(d => P.D.dias[d]); G.line($('dcCurva'), { labels: lab, series: [{ name: 'Prontos somados', color: 'var(--s1)', vals: P.acum(cart.v) }, { name: 'Rebaixamento', color: 'var(--neg)', vals: P.submerso(cart.v), fill: true, w: 1 }], h: 260, fmtX: F.dataBr }); }
     else $('dcCurva').innerHTML = '<div class="vazio">Nenhum robô pronto no filtro.</div>';
     // real × simulador
     const rr = reais.map(ro => { const r = ro.i, dr = C.dias.filter(d => !isNaN(P.RES[r].f[d])); if (!dr.length) return null;
