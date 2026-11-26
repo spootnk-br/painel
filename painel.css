@@ -192,3 +192,11 @@ table.fam tr.fam-graf:hover { background: none; }
 .conf-ok div { color: var(--good-text); }
 .conf-warn { border-left: 4px solid var(--warning); }
 .conf-crit { border-left: 4px solid var(--critical); background: color-mix(in srgb, var(--critical) 8%, transparent); }
+
+/* 25/11: aba Decisao sem filtros (usa o parecer e o historico inteiro) e lista "O que fazer" */
+.na-decisao #filtros { display: none; }
+ol.acoes-dia { margin: 4px 0 0; padding-left: 22px; }
+ol.acoes-dia li { padding: 5px 0; border-bottom: 1px solid var(--grid); line-height: 1.45; }
+ol.acoes-dia li:last-child { border-bottom: 0; }
+ol.acoes-dia .selo { font-size: 11px; }
+details.card > summary { list-style: revert; }

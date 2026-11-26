@@ -520,27 +520,33 @@
    rebaixamento de referência = maior(rebaixamento máx histórico, rebaixamento P95 projetado em 60 pregões);
    capital = rebaixamento de referência ÷ % da conta que se aceita perder nele (padrão 30%). */
 (function () {
-  const P = window.P, F = G.F, R = P.R, $ = P.$;
+  /* ======== Aba Decisão (25/11: refeita para decidir, não para explorar) ========
+     - UMA fonte de veredito: o parecer diário (PARECER_robos.csv -> D.par). O painel não tem regra própria.
+     - Histórico inteiro, sem os filtros (os filtros valem para as abas de análise).
+     - Ordem: conta real -> o que fazer -> candidatos -> em teste -> deletar -> plano de crescimento -> análise completa (fechada). */
+  const P = window.P, F = G.F, R = P.R, $ = P.$, D = P.D;
   const base = n => n.replace(/\s*·\s*REAL$/, '');
   const VER = { pronto: { t: 'Pronto p/ real', c: 'good', i: '✓', o: 4, cor: 'var(--good)' }, observar: { t: 'Observar', c: 'warn', i: '…', o: 3, cor: 'var(--warning)' }, teste: { t: 'Em teste', c: 'info', i: '◷', o: 2, cor: 'var(--muted)' }, nao: { t: 'Não levar', c: 'bad', i: '✕', o: 1, cor: 'var(--critical)' } };
-  // queda P95 projetada: 1.000 sorteios de 60 pregões (com reposição) dos resultados diários do robô; semente fixa
+  const TODOS = P.DIA.map(d => d.i), ULT = TODOS[TODOS.length - 1];
+  const PAR = {}; if (D.par) for (const p of D.par.rob) PAR[p.W] = p;
+  const isoDir = s => s ? s.replace(/_/g, '-') : null;   // nome da pasta do diário: 2026-11-25
+  const dPar = D.par ? F.dataBr(isoDir(D.par.dia)) : null;
+  const num = s => s === '' || s == null ? NaN : +s;
+  const bonito = s => (s || '').replace(/\s*\(precisa ~[-–—]? ?pregoes\)/g, '').replace(/pregoes/g, 'pregões').replace(/ult\. 20 negativo/g, 'últimos 20 negativos').replace(/passa em tudo/g, 'passa em todos os critérios').replace(/(\d)\.(\d)/g, '$1,$2');
+  // queda P95 projetada: 1.000 sorteios de 60 pregões (com reposição) dos resultados diários; semente fixa
   function quedaP95(v, H = 60, it = 1000) {
     let seed = 987654321; const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
     const out = new Float64Array(it); for (let k = 0; k < it; k++) { let E = 0, pk = 0, dd = 0; for (let i = 0; i < H; i++) { E += v[Math.floor(rnd() * v.length)]; if (E > pk) pk = E; if (pk - E > dd) dd = pk - E; } out[k] = dd; }
     return M.pctl(Array.from(out), 0.95);
   }
-  function cfg() { const S = P.S; if (!S.dec) S.dec = {}; const c = S.dec; if (c.pct == null) c.pct = 30; if (c.cap == null) c.cap = ''; delete c.margem; delete c.folga; return c; }   // mesmo objeto sempre (senão a mudança se perde)
-  /* -------- plano de crescimento (24/11: "começar baixo com robôs confiáveis e ir crescendo") --------
-     Carteira de um conjunto de robôs: R$/dia = soma dos R$/dia (com slippage) de cada um;
-     rebaixamento = maior(histórico, P95 projetado 60 pregões) da soma diária nos pregões em que TODOS rodaram
-     (assim a correlação entra: robôs que se compensam pedem menos capital que a soma). Com < 10 pregões em comum: soma dos rebaixamentos (conservador). */
+  function cfg() { const S = P.S; if (!S.dec) S.dec = {}; const c = S.dec; if (c.pct == null) c.pct = 30; if (c.cap == null) c.cap = ''; delete c.margem; delete c.folga; return c; }
+  // carteira de um conjunto: R$/dia somado; rebaixamento = maior(histórico, P95) da soma diária nos pregões em que TODOS rodaram
   function conjunto(xs, c) {
-    const rs = xs.map(x => x.r), C = P.CTX, dc = C.dias.filter(d => rs.every(r => !isNaN(P.RES[r].f[d])));
+    const rs = xs.map(x => x.r), dc = TODOS.filter(d => rs.every(r => !isNaN(P.RES[r].f[d])));
     const v = Ind.serieSoma(rs, dc), dd = Ind.ddDe(v), p95 = dc.length >= 10 ? quedaP95(v) : NaN;
     const rb = dc.length >= 10 ? Math.max(dd, p95) : M.sum(xs.map(x => x.rb));
     return { xs, rs, dc, v, dd, p95, rb, comum: dc.length, real: M.sum(xs.map(x => x.real)), ct: M.sum(xs.map(x => x.ct)), capital: rb / (c.pct / 100) };
   }
-  // guloso: a cada etapa entra o robô pronto que dá mais R$/dia por real de capital a mais, sem passar de 5 contratos somados
   function plano(pr, c) {
     const et = []; let set = [], rest = pr.slice();
     while (rest.length) { const ant = et.length ? et[et.length - 1] : { real: 0, capital: 0 }; let best = null;
@@ -550,170 +556,212 @@
     et.forEach((e, i) => { if (!i) return; const a = et[i - 1]; e.falta = Math.max(0, e.capital - a.capital); e.dias = a.real > 0 ? e.falta / a.real : Infinity; });
     return { et, fora: rest };
   }
-  function avaliar(r, dias, ops, c) {
-    const x = M.linha(r, dias, ops), d = x.d, o = x.o, rob = P.ROB[r];
+  // uma linha por robô do simulador que está no Profit hoje; números e veredito do parecer, série diária do painel
+  function avaliar(r, c) {
+    const rob = P.ROB[r], x = M.linha(r, TODOS, P.OPS_R[r]), d = x.d, o = x.o;
     if (!d.n) return null;
-    const slip = o.n ? (o.liq - o.saldoTick) / d.n : 0, real = d.porDia - slip;
-    const u20 = M.mean(d.v.slice(-20)), ct = Math.max(1, o.n ? o.maxCt : (d.mp || 1));
-    // rebaixamento de referência = maior(histórico, P95 projetado em 60 pregões; projeção só com ≥ 10 pregões)
-    const p95 = d.n >= 10 ? quedaP95(d.v) : NaN, rb = Math.max(d.dd, isFinite(p95) ? p95 : 0), rbProj = isFinite(p95) && p95 > d.dd;
-    const capital = rb > 0 ? rb / (c.pct / 100) : NaN, retMes = capital > 0 && d.n >= 20 ? 100 * 21 * real / capital : NaN;
-    const diasGanho = real > 0 ? d.dd / real : Infinity;
-    const recup = d.dd <= 0 ? 0 : d.diasRecup != null ? d.diasRecup : null;   // pregões do fundo até voltar ao pico (null = ainda não voltou)
-    const crit = [
-      { t: 'Amostra', ok: d.n >= 20, x: `${d.n} pregões (mín. 20)` },
-      { t: 'Lucro', ok: real >= 50, x: `R$/dia com slippage ${F.brl(real)} (mín. 50; alvo 100)` },
-      { t: 'Consistência', ok: d.h1 > 0 && d.h2 > 0, x: `metades ${F.n0(d.h1)} e ${F.n0(d.h2)} por dia (as 2 > 0)` },
-      { t: 'Recência', ok: u20 > 0, x: `últimos 20 pregões ${F.brl(u20)}/dia (> 0)` },
-      { t: 'Sem sorte', ok: d.semMelhor > 0 && !(d.pctMelhor > 50), x: `sem o melhor dia sobra ${F.brl(d.semMelhor)}` },
-      { t: 'Rebaixamento', ok: diasGanho <= 12, x: `rebaixamento máx = ${isFinite(diasGanho) ? F.n1(diasGanho) : '∞'} dias de ganho (≤ 12)` },
-      { t: 'Estatística', ok: d.tdia >= 1.5, x: `t-dia ${F.n2(d.tdia)} (≥ 1,5 = não é ruído)` },
-      { t: 'Contratos', ok: ct <= 5, x: `até ${ct} contrato(s) numa operação (conta real: 5)` }];
-    const falhas = crit.filter(k => !k.ok);
-    // regra do usuário: < 20 pregões não se julga (nem para levar, nem para descartar)
-    const ver = d.n < 20 ? 'teste' : real <= 0 || diasGanho > 25 || (u20 < 0 && d.h2 < 0) ? 'nao' : falhas.length ? 'observar' : 'pronto';
-    const motivo = ver === 'pronto' ? 'passa nos 8 critérios' : ver === 'teste' ? `${d.n} de 20 pregões · até aqui ${real > 0 ? 'positivo' : 'negativo'}` : real <= 0 ? 'não ganha com slippage' : diasGanho > 25 ? 'rebaixamento come mais de 25 dias de ganho' : ver === 'nao' ? 'piorando: 2ª metade e últimos 20 negativos' : falhas.map(k => k.t.toLowerCase()).join(', ');
-    return { r, nome: rob.n, fam: rob.f, x, d, o, n: d.n, bruto: d.porDia, slip, real, u20, pctPos: d.pctPos, mPos: d.mPos, mNeg: d.mNeg, best: d.best, worst: d.worst, dd: d.dd, p95,
-      dataFundo: d.iFundo >= 0 ? P.D.dias[d.idx[d.iFundo]] : null, recup, submAtual: d.submersoAtual, submMax: d.submersoMax, fatorRec: d.recup, diasGanho, ct, capital, rb, rbProj, retMes, perdaMes: d.perda20, crit, ver, motivo };
+    const p = PAR[rob.w], slipP = o.n ? (o.liq - o.saldoTick) / d.n : 0;
+    const p95c = d.n >= 10 ? quedaP95(d.v) : NaN;
+    const z = p ? { fonte: 'parecer', ver: p.Ver, motivo: bonito(p.Motivo), n: +p.N, real: num(p.RsDia), u10: num(p.U10), u20: num(p.U20), mes: num(p.Mes), m1: num(p.M1), m2: num(p.M2), amplo: num(p.Amplo), estreito: num(p.Estreito), na: +p.NA, ne: +p.NE,
+      t: num(p.T), nt2: num(p.NT2), queda: num(p.Queda), p95: num(p.P95), pior: num(p.Pior), ct: +p.Ct || 1, alav: p.Alavanca && !/nada robusto/.test(p.Alavanca) ? p.Alavanca : '', fam: p.Fam || rob.f }
+      : { fonte: 'painel', ver: d.n < 20 ? 'teste' : (d.porDia - slipP) <= 0 ? 'nao' : 'observar', motivo: 'fora do parecer de hoje (cálculo do painel)', n: d.n, real: d.porDia - slipP, u10: d.u10, u20: M.mean(d.v.slice(-20)), mes: NaN, m1: d.h1, m2: d.h2, amplo: NaN, estreito: NaN, na: 0, ne: 0,
+      t: d.tdia, nt2: NaN, queda: d.dd, p95: p95c, pior: d.worst, ct: Math.max(1, o.n ? o.maxCt : (d.mp || 1)), alav: '', fam: rob.f };
+    const rb = Math.max(isFinite(z.queda) ? z.queda : d.dd, isFinite(z.p95) ? z.p95 : 0);
+    const capital = rb > 0 ? rb / (c.pct / 100) : NaN;
+    return Object.assign(z, { r, nome: rob.n, x, d, o, bruto: d.porDia, slip: slipP, pctPos: d.pctPos, mPos: d.mPos, mNeg: d.mNeg, worst: d.worst, dd: d.dd, recup: d.dd <= 0 ? 0 : d.diasRecup != null ? d.diasRecup : null, submAtual: d.submersoAtual,
+      dataFundo: d.iFundo >= 0 ? P.D.dias[d.idx[d.iFundo]] : null, rb, capital, retMes: capital > 0 && z.n >= 20 ? 100 * 21 * z.real / capital : NaN, diasGanho: z.real > 0 ? d.dd / z.real : Infinity });
   }
-  let cache = { ctx: null, k: '', rows: null };
+  let cache = { k: '', rows: null };
   function linhasDec() {
-    const C = P.CTX, c = cfg(), k = String(c.pct); if (cache.ctx === C && cache.k === k) return cache.rows;
-    const by = {}; for (const o of C.opsF) (by[o.r] = by[o.r] || []).push(o);
-    const rows = C.robos.filter(r => P.ROB[r].tc !== 'Real').map(r => avaliar(r, C.dias, by[r] || [], c)).filter(Boolean);
-    // "na real" = está HOJE no Strategies.dat do Profit_Euro (at = 1, lido todo dia no CONFIG_REAL). Quem já rodou e saiu = "saiu da real"
-    const naReal = new Set(P.ROB.filter(r => r.tc === 'Real' && r.at).map(r => base(r.n)));
-    const saiu = new Set(P.ROB.filter(r => r.tc === 'Real' && !r.at).map(r => base(r.n)));
+    const c = cfg(), k = String(c.pct); if (cache.k === k) return cache.rows;
+    const rows = P.ROB.filter(r => r.tc !== 'Real' && r.at).map(r => avaliar(r.i, c)).filter(Boolean);
+    // "na real" = está HOJE no Strategies.dat do Profit_Euro (at = 1); quem rodou e saiu = "saiu da real"
+    const naReal = new Set(P.ROB.filter(r => r.tc === 'Real' && r.at).map(r => base(r.n))), saiu = new Set(P.ROB.filter(r => r.tc === 'Real' && !r.at).map(r => base(r.n)));
     rows.forEach(x => { x.naReal = naReal.has(x.nome); x.saiuReal = !x.naReal && saiu.has(x.nome); });
-    cache = { ctx: C, k, rows }; return rows;
+    cache = { k, rows }; return rows;
   }
   window.Dec = { linhasDec, VER };
-  const verHtml = x => { const v = VER[x.ver]; return `<span class="selo ${v.c}" title="${F.esc(x.crit.map(k => (k.ok ? '✓ ' : '✕ ') + k.t + ': ' + k.x).join('\n'))}"><i>${v.i}</i>${v.t}</span><div class="sub" style="font-size:11px;max-width:190px;white-space:normal">${F.esc(x.motivo)}</div>`; };
+  const tipVer = x => [`${VER[x.ver].t} (${x.fonte === 'parecer' ? 'parecer de ' + dPar : 'cálculo do painel'})`, x.motivo, `metades ${F.n0(x.m1)} / ${F.n0(x.m2)} por dia`,
+    isFinite(x.amplo) || isFinite(x.estreito) ? `mercado amplo ${F.n0(x.amplo)} (${x.na} dias) · estreito ${F.n0(x.estreito)} (${x.ne} dias)` : '', isFinite(x.t) ? `t ${F.n2(x.t)}${isFinite(x.nt2) ? ' · precisa de ~' + F.n0(x.nt2) + ' pregões para t 2' : ''}` : '', `até ${x.ct} contrato(s) (conta real: 5)`].filter(Boolean).join('\n');
+  const verHtml = x => { const v = VER[x.ver]; return `<span class="selo ${v.c}" title="${F.esc(tipVer(x))}"><i>${v.i}</i>${v.t}</span><div class="sub" style="font-size:11px;max-width:230px;white-space:normal">${F.esc(x.motivo)}</div>`; };
+  const marcaReal = x => x.naReal ? ' <span class="selo info" title="está hoje na conta real (Strategies.dat do Profit_Euro)"><i>●</i>na real</span>' : x.saiuReal ? ' <span class="selo" title="já rodou na conta real e foi removido de lá"><i>○</i>saiu da real</span>' : '';
+  const nomeHtml = x => P.linkRobo(x.r) + marcaReal(x) + `<div class="sub" style="font-size:11px">${F.esc(x.fam || '')}</div>`;
   const recHtml = x => x.dd <= 0 ? '<span class="sub">sem rebaixamento</span>' : x.recup != null ? `${x.recup} pregões` : `<span class="neg">não voltou</span> <span class="sub">(há ${x.submAtual})</span>`;
+  // dia útil n pregões à frente (pula sábado e domingo; feriados não)
+  const diaUtil = (iso, n) => { const t = new Date(iso + 'T12:00:00'); let k = 0; while (k < n) { t.setDate(t.getDate() + 1); const w = t.getDay(); if (w && w < 6) k++; } return t.toISOString().slice(0, 10); };
+  const selAcao = a => /delet|exclu/i.test(a) ? 'bad' : /testar|reavaliar/i.test(a) ? 'info' : /conferir|deixar|reduzir|tirar|pausad/i.test(a) ? 'warn' : '';
+
+  // ---------- conta real: um robô por linha, com o mesmo robô do simulador nos mesmos dias ----------
+  function contaReal() {
+    return P.ROB.filter(r => r.tc === 'Real').map(ro => { const r = ro.i, dr = TODOS.filter(d => !isNaN(P.RES[r].f[d])); if (!dr.length) return null;
+      const vals = dr.map(d => P.RES[r].f[d]), manual = /^MANUAL/.test(ro.n);
+      const sim = manual ? null : P.ROB.filter(s => s.tc !== 'Real' && s.n === base(ro.n)).sort((a, b) => b.at - a.at)[0];
+      const vs = sim ? M.sum(dr.map(d => isNaN(P.RES[sim.i].f[d]) ? 0 : P.RES[sim.i].f[d])) : NaN, vr = M.sum(vals);
+      const p = sim ? PAR[sim.w] : null;
+      return { r, ro, nome: ro.n, at: ro.at, manual, n: dr.length, vals, hoje: dr[dr.length - 1] === ULT ? vals[vals.length - 1] : NaN, u5: M.sum(vals.slice(-5)), vr, porDia: vr / dr.length, vs, dif: sim ? vr - vs : NaN,
+        simHoje: sim && dr[dr.length - 1] === ULT && !isNaN(P.RES[sim.i].f[ULT]) ? P.RES[sim.i].f[ULT] : NaN, ver: p ? p.Ver : null, motivo: p ? bonito(p.Motivo) : '', primeiro: P.D.dias[dr[0]], ultimo: P.D.dias[dr[dr.length - 1]] }; }).filter(Boolean);
+  }
+  // ---------- o que fazer: ações do especialista (ACOES.csv); sem elas, as que saem direto do parecer ----------
+  function acoes(rows, del) {
+    if (D.acoes && D.acoes.itens.length) return { fonte: 'especialista', dia: isoDir(D.acoes.dia), itens: D.acoes.itens.slice().sort((a, b) => (+a.p || 9) - (+b.p || 9)) };
+    const it = [];
+    rows.filter(x => x.ver === 'pronto' && !x.naReal).forEach(x => it.push({ p: 2, r: x.nome, a: 'Candidato para a real', x: `${F.brl(x.real)}/dia com slippage, ${x.ct} contrato(s). Ver o plano de crescimento.` }));
+    rows.filter(x => x.naReal && x.ver === 'nao').forEach(x => it.push({ p: 1, r: x.nome, a: 'Tirar da real', x: `o mesmo robô no simulador virou Não levar: ${x.motivo}` }));
+    del.forEach(x => it.push({ p: 5, r: x.nome, a: 'Deletar do simulador', x: x.porque }));
+    return { fonte: 'parecer', dia: D.par ? isoDir(D.par.dia) : null, itens: it.sort((a, b) => a.p - b.p) };
+  }
 
   R.decisao = host => {
-    const C = P.CTX, c = cfg(), rows = linhasDec();
-    const reais = P.ROB.filter(r => r.tc === 'Real');
+    const c = cfg(), rows = linhasDec(), reais = contaReal(), atuais = reais.filter(z => z.at), sairam = reais.filter(z => !z.at);
     const pr = rows.filter(x => x.ver === 'pronto'), ob = rows.filter(x => x.ver === 'observar'), te = rows.filter(x => x.ver === 'teste'), na = rows.filter(x => x.ver === 'nao');
+    // deletar: Não levar com 20+ pregões; Observar fraco demais; Em teste já perdendo forte (t <= -2 com 3+ pregões)
+    const del = rows.filter(x => !x.naReal).map(x => {
+      if (x.n >= 20 && x.ver === 'nao') return Object.assign({ acao: 'Deletar', porque: x.motivo }, x);
+      if (x.n >= 20 && x.ver === 'observar' && x.real < 25 && !(x.t >= 1)) return Object.assign({ acao: 'Pode deletar', porque: `só ${F.brl(x.real)}/dia com slippage, t ${F.n1(x.t)}: levaria ${isFinite(x.nt2) ? F.n0(x.nt2) : 'centenas de'} pregões para provar` }, x);
+      if (x.n >= 3 && x.n < 20 && x.t <= -2) return Object.assign({ acao: 'Pode deletar', porque: `perdendo forte antes dos 20 pregões: ${F.brl(x.real)}/dia, t ${F.n1(x.t)}` }, x);
+      return null; }).filter(Boolean);
+    const ac = acoes(rows, del);
+    const delSet = new Set(del.map(x => x.r));
+    const cand = rows.filter(x => x.n >= 20 && (x.ver === 'pronto' || x.ver === 'observar') && !x.naReal && !delSet.has(x.r));
     const pl = plano(pr, c), cap = +c.cap > 0 ? +c.cap : null;
     const aqui = cap == null ? -1 : pl.et.reduce((k, e, i) => e.capital <= cap ? i : k, -1);
     const meses = d => !isFinite(d) ? '—' : d < 1 ? 'já' : `~${Math.ceil(d)} pregões (${F.n1(d / 21)} ${d / 21 >= 2 ? 'meses' : 'mês'})`;
-    // fila: robôs em observação, do mais perto de virar pronto (menos critérios faltando, depois mais t-dia)
-    const fila = ob.slice().sort((a, b) => a.crit.filter(k => !k.ok).length - b.crit.filter(k => !k.ok).length || b.d.tdia - a.d.tdia).slice(0, 6);
+    const soma = (xs, k) => M.sum(xs.map(z => isFinite(z[k]) ? z[k] : 0));
+    // robôs da real (sem as operações manuais, que aparecem à parte)
+    const atuaisR = atuais.filter(z => !z.manual), man = atuais.find(z => z.manual), hojeR = soma(atuaisR, 'hoje'), totR = soma(atuaisR, 'vr'), difR = soma(atuaisR, 'dif');
+    const velho = ac.dia && D.par && ac.dia !== isoDir(D.par.dia);
     host.innerHTML = `
-      <div class="card"><div class="cab"><div><h2>O que levar para a conta real</h2><div class="sub">Robôs do simulador no período filtrado. Resultados já descontam slippage de 1 tick (5 pts) na entrada e na saída. Passe o mouse no veredito para ver os 8 critérios.</div></div>
-        <div class="ctrl" title="capital = rebaixamento de referência ÷ este %. Ex.: rebaixamento R$ 1.500 com 30% → capital R$ 5.000">No pior rebaixamento aceito perder <select id="dcPct">${[15, 20, 25, 30, 40, 50].map(f => `<option value="${f}" ${f === c.pct ? 'selected' : ''}>${f}% da conta</option>`).join('')}</select></div></div>
-      <div class="tiles" style="margin:10px 0 0">
-        ${P.tile('Prontos para a real', pr.length, 'passam nos 8 critérios')}
-        ${P.tile('Observar', ob.length, 'positivos, falta algum critério')}
-        ${P.tile('Em teste', te.length, 'menos de 20 pregões: ainda não dá para julgar')}
-        ${P.tile('Não levar', na.length, 'perdem, piorando ou rebaixamento grande', na.length ? 'neg' : '')}
-      </div></div>
-      <div class="card"><div class="cab"><div><h2>Robôs para deletar do simulador</h2><div class="sub">Só robôs que ainda estão no Profit, com 20 pregões ou mais no período filtrado. <b>Deletar</b> = veredito Não levar. <b>Pode deletar</b> = positivo, mas fraco demais: menos de R$ 25/dia com slippage e t < 1, então levaria centenas de pregões para provar alguma coisa. Robô que roda na real não entra: a cópia do simulador é a comparação.</div></div>
+      <div class="sub" style="margin:0 0 10px">Esta aba é a decisão do dia: usa o <b>parecer de ${dPar || '—'}</b> e o histórico inteiro, sem os filtros (eles valem para as outras abas). R$/dia já com slippage de 1 tick por lado.</div>
+      <div class="tiles">
+        ${P.tile('Robôs da real hoje', F.sbrl(hojeR), `${atuaisR.length} robôs · ${F.dataBr(P.D.dias[ULT])}${man && isFinite(man.hoje) ? ` · manual ${F.sbrl(man.hoje)} à parte` : ''}`, F.cls(hojeR))}
+        ${P.tile('Robôs da real, acumulado', F.sbrl(totR), `desde que cada robô entrou${man ? ` · manual ${F.sbrl(man.vr)} à parte` : ''}`, F.cls(totR))}
+        ${P.tile('Real − simulador', F.sbrl(difR), 'mesmos robôs, mesmos dias (negativo = a real executou pior)', F.cls(difR))}
+        ${P.tile('Prontos fora da real', pr.filter(x => !x.naReal).length, pr.filter(x => !x.naReal).map(x => x.nome).join(', ') || 'nenhum')}
+        ${P.tile('Para deletar', del.length, 'do simulador', del.length ? 'neg' : '')}
+      </div>
+      <div class="card"><div class="cab"><h2>Conta real</h2><span class="sub">cada robô da real × o mesmo robô no simulador, nos mesmos pregões</span></div><div id="dcReal"></div>
+        ${sairam.length ? `<div class="sub" style="margin-top:6px">Saíram da real: ${sairam.map(z => `${F.esc(base(z.nome))} (último pregão ${F.dataBr(z.ultimo)}, ${F.sbrl(z.vr)})`).join(' · ')}.</div>` : ''}</div>
+      <div class="card"><div class="cab"><h2>O que fazer</h2><span class="sub">${ac.fonte === 'especialista' ? `parecer do especialista de ${F.dataBr(ac.dia)}` : `tirado do parecer de ${dPar} (as ações do especialista aparecem depois das 19:20)`}</span></div>
+        ${velho ? `<div class="sub neg" style="margin-bottom:6px">Atenção: estas ações são de ${F.dataBr(ac.dia)}; o parecer de ${dPar} ainda não tem as do especialista.</div>` : ''}
+        ${ac.itens.length ? `<ol class="acoes-dia">${ac.itens.map(i => `<li><span class="selo ${selAcao(i.a)}"><i>${selAcao(i.a) === 'bad' ? '✕' : selAcao(i.a) === 'warn' ? '!' : selAcao(i.a) === 'info' ? '◷' : '•'}</i>${F.esc(i.a)}</span> <b>${F.esc(i.r)}</b> <span class="sub">${F.esc(i.x)}</span></li>`).join('')}</ol>` : '<div class="vazio">Nada a fazer hoje.</div>'}</div>
+      <div class="card"><div class="cab"><div><h2>Candidatos para a real</h2><div class="sub">20 pregões ou mais, positivos, fora da real. Passe o mouse no veredito para ver metades, regime e t.</div></div></div><div id="dcCand"></div></div>
+      <div class="card"><div class="cab"><div><h2>Em teste</h2><div class="sub">Menos de 20 pregões: ainda não se julga. A data é a estimativa de quando fecham 20 pregões (sem contar feriados).</div></div></div><div id="dcTeste" style="max-height:440px;overflow:auto"></div></div>
+      <div class="card"><div class="cab"><div><h2>Robôs para deletar do simulador</h2><div class="sub"><b>Deletar</b> = Não levar com 20+ pregões. <b>Pode deletar</b> = positivo mas fraco demais (menos de R$ 25/dia e t < 1), ou já perdendo forte antes dos 20 pregões (t ≤ −2). Robô que está na real não entra: a cópia do simulador é a comparação.</div></div>
         <button class="btn" id="dcDelCsv">Exportar CSV</button></div><div id="dcDel"></div>
         <div class="sub" style="margin-top:6px">Antes de apagar: backup do Strategies.dat. Apagar a automação não apaga o código da estratégia, e o histórico continua no painel com o filtro "Removidos".</div></div>
-      <div class="card"><div class="cab"><div><h2>Plano de crescimento: começar pequeno</h2><div class="sub">Só robôs prontos (confiáveis). Começa pelo que dá mais resultado por real de capital; os próximos entram quando o lucro levar a conta até o capital da etapa. No máximo 5 contratos somados.</div></div>
-        <div class="ctrl">Capital que tenho hoje R$ <input type="number" id="dcCap" value="${cap || ''}" placeholder="ex.: 3000" step="500" min="0" style="width:90px"></div></div>
-        ${!pl.et.length ? '<div class="vazio">Nenhum robô pronto no filtro: ainda não há carteira confiável para começar.</div>' : `
-        <div id="dcAviso" style="margin:6px 0 10px">${cap == null ? '<span class="sub">Informe o capital que você tem para ver em que etapa começa.</span>'
-          : aqui < 0 ? `<b>Com ${F.brl(cap)} ainda não fecha a 1ª etapa (${F.brl(pl.et[0].capital)}).</b> Rodando ${F.esc(pl.et[0].add.nome)} assim, o rebaixamento de referência (${F.brl(pl.et[0].rb)}) levaria <b class="neg">${F.pct(100 * pl.et[0].rb / cap)}</b> da conta. Opções: aceitar perder mais (seletor acima) ou juntar ${F.brl(pl.et[0].capital - cap)}.`
-          : `<b>Com ${F.brl(cap)} você começa na etapa ${aqui + 1}</b>: ${pl.et[aqui].xs.map(x => F.esc(x.nome)).join(' + ')} · ${F.brl(pl.et[aqui].real)}/dia esperado.${pl.et[aqui + 1] ? ` Próxima etapa (${F.esc(pl.et[aqui + 1].add.nome)}) com ${F.brl(pl.et[aqui + 1].capital)}: faltam ${F.brl(pl.et[aqui + 1].capital - cap)}, ${meses((pl.et[aqui + 1].capital - cap) / pl.et[aqui].real)} no ritmo histórico.` : ' É a última etapa com os prontos de hoje.'}`}</div>
+      <div class="card"><div class="cab"><div><h2>Plano de crescimento</h2><div class="sub">Só robôs prontos. Começa pelo que dá mais resultado por real de capital; os próximos entram quando o lucro levar a conta ao capital da etapa. No máximo 5 contratos somados (pelo limite da config).</div></div>
+        <div class="ctrl"><span title="capital = rebaixamento de referência ÷ este %">Aceito perder <select id="dcPct">${[15, 20, 25, 30, 40, 50].map(f => `<option value="${f}" ${f === c.pct ? 'selected' : ''}>${f}%</option>`).join('')}</select> da conta</span>
+          · Capital hoje R$ <input type="number" id="dcCap" value="${cap || ''}" placeholder="ex.: 3000" step="500" min="0" style="width:90px" title="fica só neste navegador"></div></div>
+        ${!pl.et.length ? '<div class="vazio">Nenhum robô pronto: ainda não há carteira confiável para montar.</div>' : `
+        <div style="margin:6px 0 10px">${cap == null ? '<span class="sub">Informe o capital para ver em que etapa você está (o valor fica só neste navegador).</span>'
+          : aqui < 0 ? `<b>Com ${F.brl(cap)} ainda não fecha a 1ª etapa (${F.brl(pl.et[0].capital)}).</b> O rebaixamento de referência de ${F.esc(pl.et[0].add.nome)} (${F.brl(pl.et[0].rb)}) levaria <b class="neg">${F.pct(100 * pl.et[0].rb / cap)}</b> da conta.`
+          : `<b>Com ${F.brl(cap)} cabe até a etapa ${aqui + 1}</b>: ${pl.et[aqui].xs.map(x => F.esc(x.nome)).join(' + ')} · ${F.brl(pl.et[aqui].real)}/dia esperado.${pl.et[aqui + 1] ? ` Próxima (${F.esc(pl.et[aqui + 1].add.nome)}) com ${F.brl(pl.et[aqui + 1].capital)}: faltam ${F.brl(pl.et[aqui + 1].capital - cap)}, ${meses((pl.et[aqui + 1].capital - cap) / pl.et[aqui].real)} no ritmo histórico.` : ''}`}</div>
         <div id="dcPlano"></div>
-        ${pl.fora.length ? `<div class="sub" style="margin-top:6px">Não cabem nos 5 contratos junto com a carteira: ${pl.fora.map(x => `${F.esc(x.nome)} (${x.ct} ctt)`).join(', ')}.</div>` : ''}`}
-        ${fila.length ? `<h3 style="margin-top:12px">Fila: os próximos a ficar confiáveis</h3><div class="sub">${fila.map(x => `<span class="selo warn" title="${F.esc(x.crit.filter(k => !k.ok).map(k => k.t + ': ' + k.x).join('\n'))}"><i>…</i>${F.esc(x.nome)} · falta: ${F.esc(x.motivo)}</span>`).join(' ')}</div>` : ''}
-      </div>
-      <div class="grid2">
-        <div class="card"><div class="cab"><h2>Retorno × risco</h2><span class="sub">cada ponto é um robô com ≥ 20 pregões · melhor = em cima e à esquerda</span></div>
-          <div class="legenda">${Object.values(VER).filter(v => v !== VER.teste).map(v => `<span><i style="background:${v.cor}"></i>${v.t}</span>`).join('')}</div><div id="dcDisp"></div></div>
-        <div class="card"><div class="cab"><h2>Curva da carteira ${aqui >= 0 ? 'da sua etapa' : 'da 1ª etapa'}</h2><span class="sub" id="dcCurvaSub"></span></div><div id="dcCurva"></div></div>
-      </div>
-      <div class="card"><div class="cab"><h2>Ranking para a conta real</h2><button class="btn" id="dcCsv">Exportar CSV</button></div><div id="dcTab"></div>
-        <details style="margin-top:10px"><summary class="sub" style="cursor:pointer">Como ler</summary><div class="kv" style="margin-top:8px;grid-template-columns:180px 1fr">
-          <div>R$/dia</div><div style="font-weight:400;text-align:left">média por pregão já descontado 1 tick contra em cada entrada e saída (o simulador executa melhor que a real). Alvo: R$ 100.</div>
-          <div>Ganho médio / perda média</div><div style="font-weight:400;text-align:left">média dos dias positivos / dos dias negativos.</div>
-          <div>Rebaixamento máx</div><div style="font-weight:400;text-align:left">maior tombo do acumulado no histórico, do pico ao fundo. No tooltip: a data do fundo e quantos dias de ganho médio ele come.</div>
-          <div>Recuperação</div><div style="font-weight:400;text-align:left">quantos pregões levou, do fundo do rebaixamento máximo, para voltar ao pico. "Não voltou" = ainda abaixo do pico.</div>
-          <div>Rebaixamento projetado</div><div style="font-weight:400;text-align:left">o rebaixamento que pode aparecer nos próximos 60 pregões: P95 de 1.000 sorteios dos dias do próprio robô (só com ≥ 10 pregões). Costuma ser maior que o histórico, porque o histórico é só um caminho.</div>
-          <div>Capital sugerido</div><div style="font-weight:400;text-align:left">maior(rebaixamento máx, rebaixamento projetado) ÷ % da conta que você aceita perder no pior rebaixamento (padrão 30%: o pior tombo leva 30% da conta e ainda sobra para o robô se recuperar). A margem da corretora não entra: é bem menor que o rebaixamento.</div>
-          <div>Retorno ao mês</div><div style="font-weight:400;text-align:left">21 pregões × R$/dia ÷ capital sugerido. Compara robôs de tamanhos diferentes.</div>
-          <div>Veredito</div><div style="font-weight:400;text-align:left">Pronto = ≥ 20 pregões, ≥ R$ 50/dia com slippage, as 2 metades e os últimos 20 positivos, positivo sem o melhor dia, rebaixamento ≤ 12 dias de ganho, t-dia ≥ 1,5 e ≤ 5 contratos. Em teste = menos de 20 pregões (não se julga). Não levar = perde com slippage, rebaixamento > 25 dias de ganho, ou 2ª metade e últimos 20 negativos.</div>
-        </div></details></div>
-      <div class="card"><div class="cab"><h2>Já na conta real</h2><span class="sub">real × o mesmo robô no simulador, nos mesmos pregões · em cima os que estão hoje no Profit_Euro; apagados = já saíram</span></div><div id="dcReal"></div></div>`;
-    $('dcPct').onchange = e => { c.pct = +e.target.value; P.salvar(); R.decisao(host); };
+        ${pl.fora.length ? `<div class="sub" style="margin-top:6px">Não cabem nos 5 contratos junto com a carteira: ${pl.fora.map(x => `${F.esc(x.nome)} (${x.ct} ctt)`).join(', ')}.</div>` : ''}`}</div>
+      <details class="card"><summary style="cursor:pointer"><b>Análise completa</b> <span class="sub">retorno × risco, curva da etapa e o ranking com todas as colunas</span></summary>
+        <div class="grid2" style="margin-top:10px">
+          <div><h3>Retorno × risco</h3><div class="legenda">${Object.values(VER).filter(v => v !== VER.teste).map(v => `<span><i style="background:${v.cor}"></i>${v.t}</span>`).join('')}</div><div id="dcDisp"></div></div>
+          <div><h3>Curva da carteira ${aqui >= 0 ? 'da sua etapa' : 'da 1ª etapa'}</h3><div class="sub" id="dcCurvaSub"></div><div id="dcCurva"></div></div></div>
+        <div class="cab" style="margin-top:10px"><h3>Ranking completo</h3><button class="btn" id="dcCsv">Exportar CSV</button></div><div id="dcTab"></div></details>`;
+    $('dcPct').onchange = e => { c.pct = +e.target.value; P.salvar(); cache.k = ''; R.decisao(host); };
     $('dcCap').onchange = e => { c.cap = +e.target.value > 0 ? +e.target.value : ''; P.salvar(); R.decisao(host); };
+
+    // conta real
+    if (!reais.length) $('dcReal').innerHTML = '<div class="vazio">Nenhum pregão da conta real.</div>';
+    else P.tabela($('dcReal'), 'decReal', [
+      { k: 'nome', t: 'Robô', l: 1, nome: 1, html: z => P.linkRobo(z.r) + (z.at ? '' : ' <span class="selo"><i>○</i>saiu</span>') + (z.manual ? '<div class="sub" style="font-size:11px">operações feitas à mão</div>' : `<div class="sub" style="font-size:11px">na real desde ${F.dataBr(z.primeiro)}</div>`), s: z => (z.at ? 1e6 : 0) + (z.manual ? -1e5 : 0) + z.vr },
+      { k: 'hoje', t: 'Hoje', f: (v, z) => isFinite(v) ? `${F.sbrl(v)}${isFinite(z.simHoje) ? ` <span class="sub">(sim ${F.sbrl(z.simHoje)})</span>` : ''}` : '<span class="sub">não operou</span>', cls: v => F.cls(v) },
+      { k: 'u5', t: 'Últ. 5 pregões', f: v => F.sbrl(v), cor: 1 },
+      { k: 'vr', t: 'Acumulado', f: (v, z) => `${F.sbrl(v)} <span class="sub">(${z.n} preg.)</span>`, cls: v => F.cls(v) },
+      { k: 'vs', t: 'Simulador, mesmos dias', html: z => z.manual ? '<span class="sub">—</span>' : isFinite(z.vs) ? `<span class="${F.cls(z.vs)}">${F.sbrl(z.vs)}</span>` : '<span class="sub">sem par</span>' },
+      { k: 'dif', t: 'Real − sim', f: v => isFinite(v) ? F.sbrl(v) : '–', cor: 1, title: 'negativo = a real executou pior (slippage, fila, horário)' },
+      { k: 'ver', t: 'Veredito do robô (simulador)', l: 1, html: z => z.ver ? `<span class="selo ${VER[z.ver].c}"><i>${VER[z.ver].i}</i>${VER[z.ver].t}</span><div class="sub" style="font-size:11px;max-width:230px;white-space:normal">${F.esc(z.motivo)}</div>` : '<span class="sub">—</span>', s: z => z.ver ? VER[z.ver].o : 0 },
+      { k: 'sp', t: 'Curva real', html: z => G.spark(z.vals), s: z => z.vr }], reais, { sort: { k: 'nome', d: -1 }, depois: P.ligarNomes, rowAttr: z => z.at ? '' : 'style="opacity:.55"' });
+
+    // candidatos
+    const colCurva = { k: 'sp', t: 'Curva', html: x => G.spark(x.d.v), s: x => x.d.tot };
+    if (!cand.length) $('dcCand').innerHTML = '<div class="vazio">Nenhum candidato com 20+ pregões.</div>';
+    else P.tabela($('dcCand'), 'decCand', [
+      { k: 'nome', t: 'Robô', l: 1, nome: 1, html: nomeHtml, s: x => x.nome },
+      { k: 'ver', t: 'Veredito', l: 1, html: verHtml, s: x => VER[x.ver].o * 1e6 + x.real },
+      { k: 'n', t: 'Pregões', f: F.n0 },
+      { k: 'real', t: 'R$/dia', f: v => F.brl(v), cor: 1, title: 'com slippage de 1 tick por lado (parecer). Alvo 100' },
+      { k: 'u10', t: 'Últ. 10', f: v => F.brl(v), cor: 1 },
+      { k: 'estreito', t: 'Mercado estreito', f: (v, x) => isFinite(v) ? `<span title="amplo ${F.n0(x.amplo)}/dia (${x.na} dias) · estreito ${x.ne} dias">${F.brl(v)}</span>` : '–', cor: 1, title: 'R$/dia nos dias de A10 < 3000 (o regime de novembro)' },
+      { k: 't', t: 't', f: (v, x) => `<span title="${isFinite(x.nt2) ? 'precisa de ~' + F.n0(x.nt2) + ' pregões para t 2' : ''}">${F.n1(v)}</span>`, title: '2 = não é ruído' },
+      { k: 'queda', t: 'Queda máx', f: (v, x) => `<span title="projetada em 60 pregões: ${F.brl(-x.p95)}">${F.brl(-v)}</span>`, cls: () => 'neg', s: x => -x.queda },
+      { k: 'ct', t: 'Ctt', f: (v) => v > 5 ? `<span class="neg" title="mais que os 5 da conta real">${v}</span>` : F.n0(v), title: 'limite de contratos da config (conta real: 5)' },
+      { k: 'alav', t: 'Alavanca robusta', l: 1, html: x => x.alav ? `<span class="sub" style="white-space:normal;font-size:11px">${F.esc(x.alav)}</span>` : '<span class="sub">—</span>', s: x => x.alav ? 1 : 0 },
+      colCurva], cand, { sort: { k: 'ver', d: -1 }, depois: P.ligarNomes });
+
+    // em teste
+    const teste = te.map(x => Object.assign({}, x, { falta: Math.max(0, 20 - x.n), quando: diaUtil(P.D.dias[ULT], Math.max(0, 20 - x.n)) }));
+    if (!teste.length) $('dcTeste').innerHTML = '<div class="vazio">Nenhum robô em teste.</div>';
+    else P.tabela($('dcTeste'), 'decTeste', [
+      { k: 'nome', t: 'Robô', l: 1, nome: 1, html: nomeHtml, s: x => x.nome },
+      { k: 'n', t: 'Pregões', f: v => `${v} / 20` },
+      { k: 'quando', t: 'Fecha 20 em', f: v => F.dataBr(v), s: x => -x.falta },
+      { k: 'real', t: 'R$/dia até aqui', f: v => F.brl(v), cor: 1, title: 'com slippage; com poucos pregões é quase só ruído' },
+      { k: 't', t: 't', f: v => F.n1(v) },
+      { k: 'ct', t: 'Ctt', f: v => v > 5 ? `<span class="neg">${v}</span>` : F.n0(v) },
+      colCurva], teste, { sort: { k: 'real', d: -1 }, depois: P.ligarNomes });
+
+    // deletar
+    if (!del.length) $('dcDel').innerHTML = '<div class="vazio">Nenhum robô para deletar.</div>';
+    else P.tabela($('dcDel'), 'decDel', [
+      { k: 'acao', t: 'Ação', l: 1, html: x => `<span class="selo ${x.acao === 'Deletar' ? 'bad' : 'warn'}"><i>${x.acao === 'Deletar' ? '✕' : '…'}</i>${x.acao}</span>`, s: x => (x.acao === 'Deletar' ? 1e6 : 0) - x.real },
+      { k: 'nome', t: 'Robô', l: 1, nome: 1, html: nomeHtml, s: x => x.nome },
+      { k: 'porque', t: 'Por quê', l: 1, html: x => `<span class="sub" style="white-space:normal">${F.esc(x.porque)}</span>` },
+      { k: 'n', t: 'Pregões', f: F.n0 },
+      { k: 'real', t: 'R$/dia', f: v => F.brl(v), cor: 1 },
+      { k: 'u20', t: 'Últ. 20', f: v => F.brl(v), cor: 1 },
+      { k: 't', t: 't', f: v => F.n1(v) },
+      { k: 'queda', t: 'Queda máx', f: v => F.brl(-v), cls: () => 'neg', s: x => -x.queda },
+      colCurva], del, { sort: { k: 'acao', d: -1 }, depois: P.ligarNomes });
+    $('dcDelCsv').onclick = () => P.csv('robos_para_deletar.csv', [{ k: 'acao', t: 'Ação' }, { k: 'nome', t: 'Robô' }, { k: 'fam', t: 'Família' }, { k: 'porque', t: 'Por quê' }, { k: 'n', t: 'Pregões' }, { k: 'real', t: 'R$/dia c/ slippage' }, { k: 'u20', t: 'Últ. 20' }, { k: 't', t: 't' }, { k: 'queda', t: 'Queda máx' }], del);
+
+    // plano
     if (pl.et.length) {
       const erows = pl.et.map((e, i) => ({ i, e, et: i + 1, add: e.add.nome, n: e.xs.length, ct: e.ct, real: e.real, dd: e.dd, p95: e.p95, rb: e.rb, capital: e.capital, ret: 100 * 21 * e.real / e.capital, dias: i ? e.dias : 0, comum: e.comum }));
       P.tabela($('dcPlano'), 'decPlano', [
         { k: 'et', t: 'Etapa', f: (v, z) => `${v}${z.i === aqui ? ' <span class="selo good"><i>●</i>você está aqui</span>' : ''}` },
-        { k: 'add', t: 'Entra', l: 1, html: z => P.linkRobo(z.e.add.r) + (z.e.add.naReal ? ' <span class="selo info"><i>●</i>já na real</span>' : '') },
-        { k: 'n', t: 'Robôs', f: (v, z) => `<span title="${F.esc(z.e.xs.map(x => x.nome).join(' + '))}">${v}</span>` },
-        { k: 'ct', t: 'Ctt', f: F.n0, title: 'contratos somados (máx. de cada robô numa operação); conta real: 5' },
-        { k: 'real', t: 'R$/dia', f: v => F.brl(v), cor: 1, title: 'soma dos R$/dia com slippage dos robôs da etapa' },
-        { k: 'rb', t: 'Rebaixamento', f: (v, z) => `<span title="histórico ${F.brl(-z.dd)} · projetado 60 pregões ${isFinite(z.p95) ? F.brl(-z.p95) : '–'} · ${z.comum} pregões com todos rodando${z.comum < 10 ? ' (pouco: usei a soma dos rebaixamentos)' : ''}">${F.brl(-v)}</span>`, cls: () => 'neg', title: 'maior(histórico, projetado) da carteira junta: robôs que se compensam pedem menos' },
-        { k: 'capital', t: 'Capital da etapa', f: (v, z) => `<b>${F.brl(v)}</b>`, title: `rebaixamento ÷ ${c.pct}%` },
+        { k: 'add', t: 'Entra', l: 1, html: z => P.linkRobo(z.e.add.r) + marcaReal(z.e.add) },
+        { k: 'ct', t: 'Ctt', f: F.n0, title: 'contratos somados (limite da config de cada robô); conta real: 5' },
+        { k: 'real', t: 'R$/dia', f: v => F.brl(v), cor: 1 },
+        { k: 'rb', t: 'Rebaixamento', f: (v, z) => `<span title="histórico ${F.brl(-z.dd)} · projetado 60 pregões ${isFinite(z.p95) ? F.brl(-z.p95) : '–'} · ${z.comum} pregões com todos rodando">${F.brl(-v)}</span>`, cls: () => 'neg' },
+        { k: 'capital', t: 'Capital da etapa', f: v => `<b>${F.brl(v)}</b>`, title: `rebaixamento ÷ ${c.pct}%` },
         { k: 'ret', t: 'Retorno ao mês', f: v => F.pct(v, 1) },
-        { k: 'dias', t: 'Chega lá em', f: (v, z) => !z.i ? '<span class="sub">início</span>' : `${meses(v)} <span class="sub">· devagar: ${meses(2 * v)}</span>`, title: 'tempo para o lucro da etapa anterior cobrir o capital que falta. "Devagar" = rendendo metade do histórico' }],
+        { k: 'dias', t: 'Chega lá em', f: (v, z) => !z.i ? '<span class="sub">início</span>' : `${meses(v)} <span class="sub">· devagar: ${meses(2 * v)}</span>` }],
         erows, { sort: { k: 'et', d: 1 }, depois: P.ligarNomes, rowAttr: z => z.i === aqui ? 'style="background:var(--hover)"' : '' });
     }
-    // robôs para deletar (pedido de 25/11): no Profit, ≥ 20 pregões, não roda na real; Não levar, ou positivo fraco demais
-    const tR = x => x.d.sd > 0 ? x.real / x.d.sd * Math.sqrt(x.n) : NaN;
-    const del = rows.filter(x => P.ROB[x.r].at && !x.naReal && x.n >= 20).map(x => {
-      const t = tR(x), fraco = x.ver === 'observar' && x.real < 25 && !(t >= 1);
-      if (x.ver !== 'nao' && !fraco) return null;
-      return Object.assign({}, x, { tR: t, prec: t > 0 ? Math.ceil(x.n * (2 / t) ** 2) : Infinity, acao: x.ver === 'nao' ? 'Deletar' : 'Pode deletar',
-        porque: x.ver === 'nao' ? x.motivo : `só ${F.brl(x.real)}/dia com slippage, t ${F.n1(t)}` }); }).filter(Boolean);
-    if (!del.length) $('dcDel').innerHTML = '<div class="vazio">Nenhum robô para deletar no período filtrado.</div>';
-    else P.tabela($('dcDel'), 'decDel', [
-      { k: 'acao', t: 'Ação', l: 1, html: x => `<span class="selo ${x.acao === 'Deletar' ? 'bad' : 'warn'}"><i>${x.acao === 'Deletar' ? '✕' : '…'}</i>${x.acao}</span>`, s: x => (x.acao === 'Deletar' ? 1e6 : 0) - x.real },
-      { k: 'nome', t: 'Robô', l: 1, nome: 1, html: x => P.linkRobo(x.r) + `<div class="sub" style="font-size:11px">${F.esc(x.fam || '')}</div>`, s: x => x.nome },
-      { k: 'porque', t: 'Por quê', l: 1, html: x => `<span class="sub" style="white-space:normal">${F.esc(x.porque)}</span>` },
-      { k: 'n', t: 'Pregões', f: F.n0 },
-      { k: 'real', t: 'R$/dia', f: v => F.brl(v), cor: 1, title: 'com slippage de 1 tick por lado' },
-      { k: 'u20', t: 'Últ. 20', f: v => F.brl(v), cor: 1, title: 'R$/dia nos últimos 20 pregões (sem slippage)' },
-      { k: 'tR', t: 't', f: v => isFinite(v) ? F.n1(v) : '–', title: 't do R$/dia com slippage (2 = não é ruído)' },
-      { k: 'prec', t: 'Pregões p/ provar', f: v => isFinite(v) ? F.n0(v) : '<span class="sub">nunca</span>', s: x => isFinite(x.prec) ? -x.prec : -1e9, title: 'pregões necessários para chegar a t 2 no ritmo atual' },
-      { k: 'dd', t: 'Rebaix. máx', f: v => F.brl(-v), cls: v => v > 0 ? 'neg' : '' },
-      { k: 'sp', t: 'Curva', html: x => G.spark(x.d.v), s: x => x.d.tot }], del, { sort: { k: 'acao', d: -1 }, depois: P.ligarNomes });
-    $('dcDelCsv').onclick = () => P.csv('robos_para_deletar.csv', [{ k: 'acao', t: 'Ação' }, { k: 'nome', t: 'Robô' }, { k: 'fam', t: 'Família' }, { k: 'porque', t: 'Por quê' }, { k: 'n', t: 'Pregões' }, { k: 'real', t: 'R$/dia c/ slippage' }, { k: 'u20', t: 'Últ. 20' }, { k: 'tR', t: 't' }, { k: 'dd', t: 'Rebaixamento máx' }], del);
-    if (!rows.length) { $('dcTab').innerHTML = '<div class="vazio">Nenhum robô do simulador no filtro.</div>'; }
-    else {
-      const tipR = x => `<b>${F.esc(x.nome)}</b> · ${VER[x.ver].t}<div class="linha"><span>R$/dia (com slippage)</span><span>${F.brl(x.real)}</span></div><div class="linha"><span>Rebaixamento máx</span><span>${F.brl(-x.dd)}</span></div><div class="linha"><span>Capital sugerido</span><span>${F.brl(x.capital)}</span></div><div class="linha"><span>Pregões</span><span>${x.n}</span></div>`;
-      G.scatter($('dcDisp'), { pts: rows.filter(x => x.ver !== 'teste').map(x => ({ x: x.dd, y: x.real, c: VER[x.ver].cor, tip: tipR(x) })), xRot: 'rebaixamento máximo (R$)', yRot: 'R$/dia com slippage', fmtX: F.n0, h: 260 });
-      const cols = [
-        { k: 'nome', t: 'Robô', l: 1, nome: 1, fix: 1, html: x => P.linkRobo(x.r) + (x.naReal ? ' <span class="selo info" title="está hoje na conta real (Strategies.dat do Profit_Euro)"><i>●</i>na real</span>' : x.saiuReal ? ' <span class="selo" title="já rodou na conta real e foi removido de lá"><i>○</i>saiu da real</span>' : '') + `<div class="sub" style="font-size:11px">${F.esc(x.fam || '')}</div>`, s: x => x.nome },
-        { k: 'ver', t: 'Veredito', l: 1, html: verHtml, s: x => VER[x.ver].o * 1e6 + (isFinite(x.retMes) ? 10 * x.retMes : -5e4 + x.real), title: 'passe o mouse no selo para ver os 8 critérios' },
-        { k: 'n', t: 'Pregões', f: F.n0 },
-        { k: 'real', t: 'R$/dia', f: (v, x) => `<span title="sem slippage ${F.brl(x.bruto)} · slippage ${F.brl(-x.slip)}/dia">${F.brl(v)}</span>`, cls: v => F.cls(v), title: 'R$ por pregão, já com 1 tick de slippage na entrada e na saída. Alvo 100' },
-        { k: 'u20', t: 'Últ. 20', f: v => F.brl(v), cor: 1, title: 'R$/dia nos últimos 20 pregões (sem slippage)' },
-        { k: 'pctPos', t: '% dias +', f: v => F.pct(v) },
-        { k: 'mPos', t: 'Ganho médio', f: v => F.brl(v), title: 'média dos dias positivos' },
-        { k: 'mNeg', t: 'Perda média', f: v => F.brl(v), cor: 1, title: 'média dos dias negativos' },
-        { k: 'worst', t: 'Pior dia', f: v => F.brl(v), cor: 1 },
-        { k: 'dd', t: 'Rebaix. máx', f: (v, x) => `<span title="${x.dataFundo ? 'fundo em ' + F.dataBrA(x.dataFundo) + ' · ' : ''}= ${isFinite(x.diasGanho) ? F.n1(x.diasGanho) : '∞'} dias de ganho">${F.brl(-v)}</span>`, cls: v => v > 0 ? 'neg' : '', s: x => -x.dd, title: 'maior rebaixamento do acumulado, do pico ao fundo, no histórico' },
-        { k: 'p95', t: 'Rebaix. projetado', f: v => isFinite(v) ? F.brl(-v) : '<span class="sub">–</span>', cls: v => v > 0 ? 'neg' : '', s: x => isFinite(x.p95) ? -x.p95 : -1e9, title: 'rebaixamento que pode aparecer em 60 pregões: P95 de 1.000 sorteios dos dias do robô (≥ 10 pregões)' },
-        { k: 'recup', t: 'Recuperação', html: recHtml, s: x => x.recup == null ? -1000 - x.submAtual : -x.recup, title: 'pregões do fundo do rebaixamento máximo até voltar ao pico' },
-        { k: 'capital', t: 'Capital sugerido', f: (v, x) => isFinite(v) ? `<span title="${F.brl(x.rb)} (${x.rbProj ? 'rebaixamento projetado' : 'rebaixamento máx'}) ÷ ${c.pct}%">${F.brl(v)}</span>` : '–', s: x => isFinite(x.capital) ? -x.capital : -1e9, title: `maior(rebaixamento máx, projetado) ÷ ${c.pct}% (o quanto da conta você aceita perder no pior rebaixamento)` },
-        { k: 'retMes', t: 'Retorno ao mês', f: v => isFinite(v) ? F.pct(v, 1) : '<span class="sub">amostra curta</span>', cor: 1, title: '21 × R$/dia ÷ capital sugerido (só com ≥ 20 pregões)' },
-        { k: 'sp', t: 'Curva', html: x => G.spark(x.d.v), s: x => x.d.tot }];
-      P.tabela($('dcTab'), 'dec', cols, rows, { sort: { k: 'ver', d: -1 }, depois: P.ligarNomes });
-      $('dcCsv').onclick = () => P.csv('decisao_conta_real.csv', [{ k: 'nome', t: 'Robô' }, { k: 'fam', t: 'Família' }, { k: 'verT', t: 'Veredito' }, { k: 'motivo', t: 'Motivo' }, { k: 'n', t: 'Pregões' }, { k: 'real', t: 'R$/dia c/ slippage' }, { k: 'bruto', t: 'R$/dia sem slippage' }, { k: 'u20', t: 'Últ. 20' }, { k: 'pctPos', t: '% dias +' },
-        { k: 'mPos', t: 'Ganho médio' }, { k: 'mNeg', t: 'Perda média' }, { k: 'worst', t: 'Pior dia' }, { k: 'dd', t: 'Rebaixamento máx' }, { k: 'p95', t: 'Rebaixamento projetado 60 pregões' }, { k: 'rb', t: 'Rebaixamento de referência' }, { k: 'recupT', t: 'Recuperação (pregões)' }, { k: 'perdaMes', t: 'Mês ruim 5%' }, { k: 'ct', t: 'Ctt máx' }, { k: 'capital', t: 'Capital sugerido' }, { k: 'retMes', t: 'Retorno % mês' }],
-        rows.map(x => Object.assign({}, x, { verT: VER[x.ver].t, recupT: x.recup == null ? 'não voltou' : x.recup })));
-    }
+
+    // análise completa (fechada por padrão)
+    const tipR = x => `<b>${F.esc(x.nome)}</b> · ${VER[x.ver].t}<div class="linha"><span>R$/dia (com slippage)</span><span>${F.brl(x.real)}</span></div><div class="linha"><span>Queda máx</span><span>${F.brl(-x.queda)}</span></div><div class="linha"><span>Pregões</span><span>${x.n}</span></div>`;
+    G.scatter($('dcDisp'), { pts: rows.filter(x => x.ver !== 'teste').map(x => ({ x: x.queda, y: x.real, c: VER[x.ver].cor, tip: tipR(x) })), xRot: 'queda máxima (R$)', yRot: 'R$/dia com slippage', fmtX: F.n0, h: 240 });
     const eC = pl.et[Math.max(0, aqui)];
-    if (eC) { const rs = eC.rs, dc = C.dias.filter(d => rs.some(r => !isNaN(P.RES[r].f[d]))), v = Ind.serieSoma(rs, dc), lab = dc.map(d => P.D.dias[d]);
+    if (eC) { const rs = eC.rs, dc = TODOS.filter(d => rs.some(r => !isNaN(P.RES[r].f[d]))), v = Ind.serieSoma(rs, dc);
       $('dcCurvaSub').textContent = `${eC.xs.map(x => x.nome).join(' + ')} · ${dc.length} pregões · sem slippage`;
-      G.line($('dcCurva'), { labels: lab, series: [{ name: 'Acumulado', color: 'var(--s1)', vals: P.acum(v) }, { name: 'Rebaixamento', color: 'var(--neg)', vals: P.submerso(v), fill: true, w: 1 }], h: 260, fmtX: F.dataBr }); }
-    else $('dcCurva').innerHTML = '<div class="vazio">Nenhum robô pronto no filtro.</div>';
-    // real × simulador
-    const rr = reais.map(ro => { const r = ro.i, dr = C.dias.filter(d => !isNaN(P.RES[r].f[d])); if (!dr.length) return null;
-      const sim = P.ROB.filter(s => s.tc !== 'Real' && s.n === base(ro.n)).sort((a, b) => b.at - a.at)[0];
-      const vr = M.sum(dr.map(d => P.RES[r].f[d])), vs = sim ? M.sum(dr.map(d => isNaN(P.RES[sim.i].f[d]) ? 0 : P.RES[sim.i].f[d])) : NaN;
-      const ult = dr[dr.length - 1];
-      return { r, nome: ro.n, at: ro.at, ult, n: dr.length, vr, porDia: vr / dr.length, vs, dif: sim ? vr - vs : NaN, sim: sim ? sim.n : '—', manual: /^MANUAL/.test(ro.n) }; }).filter(Boolean);
-    if (!rr.length) $('dcReal').innerHTML = '<div class="vazio">Nenhum pregão da conta real no período filtrado.</div>';
-    else P.tabela($('dcReal'), 'decReal', [{ k: 'nome', t: 'Na real', l: 1, nome: 1, html: z => P.linkRobo(z.r) + (z.at ? '' : ` <span class="selo" title="não está mais no Strategies.dat do Profit_Euro"><i>○</i>saiu da real · último pregão ${F.dataBr(P.D.dias[z.ult])}</span>`), s: z => (z.at ? 1e6 : 0) + z.vr }, { k: 'n', t: 'Pregões', f: F.n0 }, { k: 'vr', t: 'Resultado real', f: v => F.brl(v), cor: 1 }, { k: 'porDia', t: 'R$/dia real', f: v => F.brl(v), cor: 1 },
-      { k: 'vs', t: 'Simulador, mesmos dias', f: v => F.brl(v), cor: 1, html: z => z.manual ? '<span class="sub">operação manual</span>' : isFinite(z.vs) ? `<span class="${F.cls(z.vs)}">${F.brl(z.vs)}</span>` : '<span class="sub">sem par no simulador</span>' },
-      { k: 'dif', t: 'Real − simulador', f: v => isFinite(v) ? F.sbrl(v) : '–', cor: 1, title: 'negativo = a real executou pior (slippage, fila, horário)' }], rr, { sort: { k: 'nome', d: -1 }, depois: P.ligarNomes, rowAttr: z => z.at ? '' : 'style="opacity:.6"' });
+      G.line($('dcCurva'), { labels: dc.map(d => P.D.dias[d]), series: [{ name: 'Acumulado', color: 'var(--s1)', vals: P.acum(v) }, { name: 'Rebaixamento', color: 'var(--neg)', vals: P.submerso(v), fill: true, w: 1 }], h: 240, fmtX: F.dataBr }); }
+    else $('dcCurva').innerHTML = '<div class="vazio">Nenhum robô pronto.</div>';
+    const cols = [
+      { k: 'nome', t: 'Robô', l: 1, nome: 1, fix: 1, html: nomeHtml, s: x => x.nome },
+      { k: 'ver', t: 'Veredito', l: 1, html: verHtml, s: x => VER[x.ver].o * 1e6 + x.real },
+      { k: 'n', t: 'Pregões', f: F.n0 },
+      { k: 'real', t: 'R$/dia', f: (v, x) => `<span title="sem slippage ${F.brl(x.bruto)}">${F.brl(v)}</span>`, cls: v => F.cls(v) },
+      { k: 'u20', t: 'Últ. 20', f: v => F.brl(v), cor: 1 },
+      { k: 'pctPos', t: '% dias +', f: v => F.pct(v) },
+      { k: 'mPos', t: 'Ganho médio', f: v => F.brl(v) },
+      { k: 'mNeg', t: 'Perda média', f: v => F.brl(v), cor: 1 },
+      { k: 'pior', t: 'Pior dia', f: v => F.brl(v), cor: 1 },
+      { k: 'queda', t: 'Queda máx', f: v => F.brl(-v), cls: v => v > 0 ? 'neg' : '', s: x => -x.queda },
+      { k: 'p95', t: 'Queda projetada', f: v => isFinite(v) ? F.brl(-v) : '–', cls: v => v > 0 ? 'neg' : '', s: x => isFinite(x.p95) ? -x.p95 : -1e9, title: 'P95 de 1.000 sorteios de 60 pregões' },
+      { k: 'recup', t: 'Recuperação', html: recHtml, s: x => x.recup == null ? -1000 - x.submAtual : -x.recup },
+      { k: 'capital', t: 'Capital sugerido', f: v => isFinite(v) ? F.brl(v) : '–', s: x => isFinite(x.capital) ? -x.capital : -1e9, title: `maior(queda, projetada) ÷ ${c.pct}%` },
+      { k: 'retMes', t: 'Retorno ao mês', f: v => isFinite(v) ? F.pct(v, 1) : '<span class="sub">amostra curta</span>', cor: 1 },
+      colCurva];
+    P.tabela($('dcTab'), 'dec', cols, rows, { sort: { k: 'ver', d: -1 }, depois: P.ligarNomes });
+    $('dcCsv').onclick = () => P.csv('decisao_conta_real.csv', [{ k: 'nome', t: 'Robô' }, { k: 'fam', t: 'Família' }, { k: 'verT', t: 'Veredito' }, { k: 'motivo', t: 'Motivo' }, { k: 'n', t: 'Pregões' }, { k: 'real', t: 'R$/dia c/ slippage' }, { k: 'u10', t: 'Últ. 10' }, { k: 'u20', t: 'Últ. 20' }, { k: 'estreito', t: 'Estreito' }, { k: 't', t: 't' },
+      { k: 'queda', t: 'Queda máx' }, { k: 'p95', t: 'Queda projetada' }, { k: 'ct', t: 'Ctt' }, { k: 'capital', t: 'Capital sugerido' }, { k: 'retMes', t: 'Retorno % mês' }, { k: 'alav', t: 'Alavanca robusta' }],
+      rows.map(x => Object.assign({}, x, { verT: VER[x.ver].t })));
   };
 })();

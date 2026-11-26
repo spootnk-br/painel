@@ -14,10 +14,12 @@
   const SLOTS = ['var(--s1)', 'var(--s2)', 'var(--s3)', 'var(--s4)', 'var(--s5)', 'var(--s6)', 'var(--s7)', 'var(--s8)'];
 
   /* ---------------- estado / filtros ---------------- */
-  const PADRAO = { preset: 'tudo', de: D.dias[0], ate: D.dias[ND - 1], semana: [1, 2, 3, 4, 5], regime: '', ampMin: '', ampMax: '', status: 'ativo', tipo: '', conta: null, familia: null, robos: null, estrategia: null, grafico: null,
+  const PADRAO = { preset: 'tudo', de: D.dias[0], ate: D.dias[ND - 1], semana: [1, 2, 3, 4, 5], regime: '', ampMin: '', ampMax: '', status: 'ativo', tipo: 'Simulada', conta: null, familia: null, robos: null, estrategia: null, grafico: null,
     busca: '', minDias: '', minDia: '', lado: '', horaDe: '', horaAte: '', durMin: '', durMax: '', resOp: '', antes: '', aba: 'decisao', robo: null, comp: [], dia: null, sort: {}, calorClamp: 500, grupo: 'familia', maisF: false, maisA: false };
   let S; try { S = Object.assign({}, PADRAO, JSON.parse(localStorage.getItem('painelRobos.v1') || '{}')); } catch (e) { S = Object.assign({}, PADRAO); }
   if (!S.v2) { S.v2 = 1; S.aba = 'decisao'; }   // 24/11: painel enxuto abre na aba Decisão
+  // 25/11: as abas de análise somavam real + simulador (cópias do mesmo robô contadas 2 vezes). Padrão = só simulador; a real tem o seu quadro na Decisão
+  if (!S.v3) { S.v3 = 1; S.tipo = 'Simulada'; S.aba = 'decisao'; }
   const salvar = () => { try { localStorage.setItem('painelRobos.v1', JSON.stringify(S)); } catch (e) { } };
 
   function aplicarPreset() {
@@ -133,7 +135,7 @@
 
   /* ---------------- abas ---------------- */
   const sujo = {};
-  function abrirAba(a) { S.aba = a; salvar(); document.querySelectorAll('#abas button').forEach(b => b.classList.toggle('on', b.dataset.aba === a)); document.querySelectorAll('.aba').forEach(s => s.classList.toggle('on', s.id === 'aba-' + a)); render(true); }
+  function abrirAba(a) { S.aba = a; salvar(); document.body.classList.toggle('na-decisao', a === 'decisao'); /* a Decisão não usa os filtros: some com eles */ document.querySelectorAll('#abas button').forEach(b => b.classList.toggle('on', b.dataset.aba === a)); document.querySelectorAll('.aba').forEach(s => s.classList.toggle('on', s.id === 'aba-' + a)); render(true); }
   let timer = null;
   function mudou() { salvar(); syncMais(); ['fConta', 'fFamilia', 'fRobo', 'fEstrategia', 'fGrafico'].forEach(id => $(id)._sync && $(id)._sync()); clearTimeout(timer); timer = setTimeout(() => { calcular(); Object.keys(R).forEach(k => sujo[k] = true); render(true); }, 120); }
   function render(force) { const a = S.aba; if (!R[a]) return; if (force || sujo[a]) { sujo[a] = false; const host = $('aba-' + a); try { R[a](host); } catch (e) { host.innerHTML = `<div class="vazio">Erro ao desenhar: ${F.esc(e.message)}</div>`; console.error(e); } } }
