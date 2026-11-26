@@ -581,8 +581,10 @@
     const C = P.CTX, c = cfg(), k = String(c.pct); if (cache.ctx === C && cache.k === k) return cache.rows;
     const by = {}; for (const o of C.opsF) (by[o.r] = by[o.r] || []).push(o);
     const rows = C.robos.filter(r => P.ROB[r].tc !== 'Real').map(r => avaliar(r, C.dias, by[r] || [], c)).filter(Boolean);
-    const naReal = new Set(P.ROB.filter(r => r.tc === 'Real').map(r => base(r.n)));
-    rows.forEach(x => x.naReal = naReal.has(x.nome));
+    // "na real" = está HOJE no Strategies.dat do Profit_Euro (at = 1, lido todo dia no CONFIG_REAL). Quem já rodou e saiu = "saiu da real"
+    const naReal = new Set(P.ROB.filter(r => r.tc === 'Real' && r.at).map(r => base(r.n)));
+    const saiu = new Set(P.ROB.filter(r => r.tc === 'Real' && !r.at).map(r => base(r.n)));
+    rows.forEach(x => { x.naReal = naReal.has(x.nome); x.saiuReal = !x.naReal && saiu.has(x.nome); });
     cache = { ctx: C, k, rows }; return rows;
   }
   window.Dec = { linhasDec, VER };
@@ -607,6 +609,9 @@
         ${P.tile('Em teste', te.length, 'menos de 20 pregões: ainda não dá para julgar')}
         ${P.tile('Não levar', na.length, 'perdem, piorando ou rebaixamento grande', na.length ? 'neg' : '')}
       </div></div>
+      <div class="card"><div class="cab"><div><h2>Robôs para deletar do simulador</h2><div class="sub">Só robôs que ainda estão no Profit, com 20 pregões ou mais no período filtrado. <b>Deletar</b> = veredito Não levar. <b>Pode deletar</b> = positivo, mas fraco demais: menos de R$ 25/dia com slippage e t < 1, então levaria centenas de pregões para provar alguma coisa. Robô que roda na real não entra: a cópia do simulador é a comparação.</div></div>
+        <button class="btn" id="dcDelCsv">Exportar CSV</button></div><div id="dcDel"></div>
+        <div class="sub" style="margin-top:6px">Antes de apagar: backup do Strategies.dat. Apagar a automação não apaga o código da estratégia, e o histórico continua no painel com o filtro "Removidos".</div></div>
       <div class="card"><div class="cab"><div><h2>Plano de crescimento: começar pequeno</h2><div class="sub">Só robôs prontos (confiáveis). Começa pelo que dá mais resultado por real de capital; os próximos entram quando o lucro levar a conta até o capital da etapa. No máximo 5 contratos somados.</div></div>
         <div class="ctrl">Capital que tenho hoje R$ <input type="number" id="dcCap" value="${cap || ''}" placeholder="ex.: 3000" step="500" min="0" style="width:90px"></div></div>
         ${!pl.et.length ? '<div class="vazio">Nenhum robô pronto no filtro: ainda não há carteira confiável para começar.</div>' : `
@@ -633,7 +638,7 @@
           <div>Retorno ao mês</div><div style="font-weight:400;text-align:left">21 pregões × R$/dia ÷ capital sugerido. Compara robôs de tamanhos diferentes.</div>
           <div>Veredito</div><div style="font-weight:400;text-align:left">Pronto = ≥ 20 pregões, ≥ R$ 50/dia com slippage, as 2 metades e os últimos 20 positivos, positivo sem o melhor dia, rebaixamento ≤ 12 dias de ganho, t-dia ≥ 1,5 e ≤ 5 contratos. Em teste = menos de 20 pregões (não se julga). Não levar = perde com slippage, rebaixamento > 25 dias de ganho, ou 2ª metade e últimos 20 negativos.</div>
         </div></details></div>
-      <div class="card"><div class="cab"><h2>Já na conta real</h2><span class="sub">real × o mesmo robô no simulador, nos mesmos pregões</span></div><div id="dcReal"></div></div>`;
+      <div class="card"><div class="cab"><h2>Já na conta real</h2><span class="sub">real × o mesmo robô no simulador, nos mesmos pregões · em cima os que estão hoje no Profit_Euro; apagados = já saíram</span></div><div id="dcReal"></div></div>`;
     $('dcPct').onchange = e => { c.pct = +e.target.value; P.salvar(); R.decisao(host); };
     $('dcCap').onchange = e => { c.cap = +e.target.value > 0 ? +e.target.value : ''; P.salvar(); R.decisao(host); };
     if (pl.et.length) {
@@ -650,12 +655,32 @@
         { k: 'dias', t: 'Chega lá em', f: (v, z) => !z.i ? '<span class="sub">início</span>' : `${meses(v)} <span class="sub">· devagar: ${meses(2 * v)}</span>`, title: 'tempo para o lucro da etapa anterior cobrir o capital que falta. "Devagar" = rendendo metade do histórico' }],
         erows, { sort: { k: 'et', d: 1 }, depois: P.ligarNomes, rowAttr: z => z.i === aqui ? 'style="background:var(--hover)"' : '' });
     }
+    // robôs para deletar (pedido de 25/11): no Profit, ≥ 20 pregões, não roda na real; Não levar, ou positivo fraco demais
+    const tR = x => x.d.sd > 0 ? x.real / x.d.sd * Math.sqrt(x.n) : NaN;
+    const del = rows.filter(x => P.ROB[x.r].at && !x.naReal && x.n >= 20).map(x => {
+      const t = tR(x), fraco = x.ver === 'observar' && x.real < 25 && !(t >= 1);
+      if (x.ver !== 'nao' && !fraco) return null;
+      return Object.assign({}, x, { tR: t, prec: t > 0 ? Math.ceil(x.n * (2 / t) ** 2) : Infinity, acao: x.ver === 'nao' ? 'Deletar' : 'Pode deletar',
+        porque: x.ver === 'nao' ? x.motivo : `só ${F.brl(x.real)}/dia com slippage, t ${F.n1(t)}` }); }).filter(Boolean);
+    if (!del.length) $('dcDel').innerHTML = '<div class="vazio">Nenhum robô para deletar no período filtrado.</div>';
+    else P.tabela($('dcDel'), 'decDel', [
+      { k: 'acao', t: 'Ação', l: 1, html: x => `<span class="selo ${x.acao === 'Deletar' ? 'bad' : 'warn'}"><i>${x.acao === 'Deletar' ? '✕' : '…'}</i>${x.acao}</span>`, s: x => (x.acao === 'Deletar' ? 1e6 : 0) - x.real },
+      { k: 'nome', t: 'Robô', l: 1, nome: 1, html: x => P.linkRobo(x.r) + `<div class="sub" style="font-size:11px">${F.esc(x.fam || '')}</div>`, s: x => x.nome },
+      { k: 'porque', t: 'Por quê', l: 1, html: x => `<span class="sub" style="white-space:normal">${F.esc(x.porque)}</span>` },
+      { k: 'n', t: 'Pregões', f: F.n0 },
+      { k: 'real', t: 'R$/dia', f: v => F.brl(v), cor: 1, title: 'com slippage de 1 tick por lado' },
+      { k: 'u20', t: 'Últ. 20', f: v => F.brl(v), cor: 1, title: 'R$/dia nos últimos 20 pregões (sem slippage)' },
+      { k: 'tR', t: 't', f: v => isFinite(v) ? F.n1(v) : '–', title: 't do R$/dia com slippage (2 = não é ruído)' },
+      { k: 'prec', t: 'Pregões p/ provar', f: v => isFinite(v) ? F.n0(v) : '<span class="sub">nunca</span>', s: x => isFinite(x.prec) ? -x.prec : -1e9, title: 'pregões necessários para chegar a t 2 no ritmo atual' },
+      { k: 'dd', t: 'Rebaix. máx', f: v => F.brl(-v), cls: v => v > 0 ? 'neg' : '' },
+      { k: 'sp', t: 'Curva', html: x => G.spark(x.d.v), s: x => x.d.tot }], del, { sort: { k: 'acao', d: -1 }, depois: P.ligarNomes });
+    $('dcDelCsv').onclick = () => P.csv('robos_para_deletar.csv', [{ k: 'acao', t: 'Ação' }, { k: 'nome', t: 'Robô' }, { k: 'fam', t: 'Família' }, { k: 'porque', t: 'Por quê' }, { k: 'n', t: 'Pregões' }, { k: 'real', t: 'R$/dia c/ slippage' }, { k: 'u20', t: 'Últ. 20' }, { k: 'tR', t: 't' }, { k: 'dd', t: 'Rebaixamento máx' }], del);
     if (!rows.length) { $('dcTab').innerHTML = '<div class="vazio">Nenhum robô do simulador no filtro.</div>'; }
     else {
       const tipR = x => `<b>${F.esc(x.nome)}</b> · ${VER[x.ver].t}<div class="linha"><span>R$/dia (com slippage)</span><span>${F.brl(x.real)}</span></div><div class="linha"><span>Rebaixamento máx</span><span>${F.brl(-x.dd)}</span></div><div class="linha"><span>Capital sugerido</span><span>${F.brl(x.capital)}</span></div><div class="linha"><span>Pregões</span><span>${x.n}</span></div>`;
       G.scatter($('dcDisp'), { pts: rows.filter(x => x.ver !== 'teste').map(x => ({ x: x.dd, y: x.real, c: VER[x.ver].cor, tip: tipR(x) })), xRot: 'rebaixamento máximo (R$)', yRot: 'R$/dia com slippage', fmtX: F.n0, h: 260 });
       const cols = [
-        { k: 'nome', t: 'Robô', l: 1, nome: 1, fix: 1, html: x => P.linkRobo(x.r) + (x.naReal ? ' <span class="selo info" title="já roda na conta real"><i>●</i>na real</span>' : '') + `<div class="sub" style="font-size:11px">${F.esc(x.fam || '')}</div>`, s: x => x.nome },
+        { k: 'nome', t: 'Robô', l: 1, nome: 1, fix: 1, html: x => P.linkRobo(x.r) + (x.naReal ? ' <span class="selo info" title="está hoje na conta real (Strategies.dat do Profit_Euro)"><i>●</i>na real</span>' : x.saiuReal ? ' <span class="selo" title="já rodou na conta real e foi removido de lá"><i>○</i>saiu da real</span>' : '') + `<div class="sub" style="font-size:11px">${F.esc(x.fam || '')}</div>`, s: x => x.nome },
         { k: 'ver', t: 'Veredito', l: 1, html: verHtml, s: x => VER[x.ver].o * 1e6 + (isFinite(x.retMes) ? 10 * x.retMes : -5e4 + x.real), title: 'passe o mouse no selo para ver os 8 critérios' },
         { k: 'n', t: 'Pregões', f: F.n0 },
         { k: 'real', t: 'R$/dia', f: (v, x) => `<span title="sem slippage ${F.brl(x.bruto)} · slippage ${F.brl(-x.slip)}/dia">${F.brl(v)}</span>`, cls: v => F.cls(v), title: 'R$ por pregão, já com 1 tick de slippage na entrada e na saída. Alvo 100' },
@@ -684,10 +709,11 @@
     const rr = reais.map(ro => { const r = ro.i, dr = C.dias.filter(d => !isNaN(P.RES[r].f[d])); if (!dr.length) return null;
       const sim = P.ROB.filter(s => s.tc !== 'Real' && s.n === base(ro.n)).sort((a, b) => b.at - a.at)[0];
       const vr = M.sum(dr.map(d => P.RES[r].f[d])), vs = sim ? M.sum(dr.map(d => isNaN(P.RES[sim.i].f[d]) ? 0 : P.RES[sim.i].f[d])) : NaN;
-      return { r, nome: ro.n, n: dr.length, vr, porDia: vr / dr.length, vs, dif: sim ? vr - vs : NaN, sim: sim ? sim.n : '—', manual: /^MANUAL/.test(ro.n) }; }).filter(Boolean);
+      const ult = dr[dr.length - 1];
+      return { r, nome: ro.n, at: ro.at, ult, n: dr.length, vr, porDia: vr / dr.length, vs, dif: sim ? vr - vs : NaN, sim: sim ? sim.n : '—', manual: /^MANUAL/.test(ro.n) }; }).filter(Boolean);
     if (!rr.length) $('dcReal').innerHTML = '<div class="vazio">Nenhum pregão da conta real no período filtrado.</div>';
-    else P.tabela($('dcReal'), 'decReal', [{ k: 'nome', t: 'Na real', l: 1, nome: 1, html: z => P.linkRobo(z.r) }, { k: 'n', t: 'Pregões', f: F.n0 }, { k: 'vr', t: 'Resultado real', f: v => F.brl(v), cor: 1 }, { k: 'porDia', t: 'R$/dia real', f: v => F.brl(v), cor: 1 },
+    else P.tabela($('dcReal'), 'decReal', [{ k: 'nome', t: 'Na real', l: 1, nome: 1, html: z => P.linkRobo(z.r) + (z.at ? '' : ` <span class="selo" title="não está mais no Strategies.dat do Profit_Euro"><i>○</i>saiu da real · último pregão ${F.dataBr(P.D.dias[z.ult])}</span>`), s: z => (z.at ? 1e6 : 0) + z.vr }, { k: 'n', t: 'Pregões', f: F.n0 }, { k: 'vr', t: 'Resultado real', f: v => F.brl(v), cor: 1 }, { k: 'porDia', t: 'R$/dia real', f: v => F.brl(v), cor: 1 },
       { k: 'vs', t: 'Simulador, mesmos dias', f: v => F.brl(v), cor: 1, html: z => z.manual ? '<span class="sub">operação manual</span>' : isFinite(z.vs) ? `<span class="${F.cls(z.vs)}">${F.brl(z.vs)}</span>` : '<span class="sub">sem par no simulador</span>' },
-      { k: 'dif', t: 'Real − simulador', f: v => isFinite(v) ? F.sbrl(v) : '–', cor: 1, title: 'negativo = a real executou pior (slippage, fila, horário)' }], rr, { sort: { k: 'vr', d: -1 }, depois: P.ligarNomes });
+      { k: 'dif', t: 'Real − simulador', f: v => isFinite(v) ? F.sbrl(v) : '–', cor: 1, title: 'negativo = a real executou pior (slippage, fila, horário)' }], rr, { sort: { k: 'nome', d: -1 }, depois: P.ligarNomes, rowAttr: z => z.at ? '' : 'style="opacity:.6"' });
   };
 })();
